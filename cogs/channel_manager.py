@@ -1,17 +1,15 @@
-import discord
-import os
-import logging
-import re
 import asyncio
-
+import logging
+import os
+import re
 from operator import itemgetter
 
-from discord.ext import commands
 from discord import ChannelType
+from discord.ext import commands
 
-from red import send_cmd_help
-from cogs.utils.dataIO import dataIO
 from cogs.utils import checks
+from cogs.utils.dataIO import dataIO
+from red import send_cmd_help
 
 default_server_vars = {
     'min_empty_channels': {
@@ -25,6 +23,7 @@ class ChannelManager:
 
 
     def __init__(self, bot):
+        logger.info('loading module')
         self.paused = False
         self.update_period = 10
 
