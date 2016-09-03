@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import os
+import random
 import re
 from operator import itemgetter
 
-from discord import ChannelType
+from discord import ChannelType, endpoints
 from discord.ext import commands
 
 from cogs.utils import checks
@@ -50,6 +51,14 @@ class ChannelManager:
     def get_channel_name_pattern(self, group_name):
         channel_name_pattern = re.compile(r'^'+re.escape(group_name)+r'\s+#(\d+)')
         return channel_name_pattern
+    def get_channel_number_in_group(self, group_name, channel):
+        pattern = self.get_channel_name_pattern(group_name)
+        match = pattern.match(channel.name)
+        if (match):
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
 
     @commands.group(pass_context=True)
     @checks.mod_or_permissions()
@@ -103,7 +112,7 @@ class ChannelManager:
         await self.bot.say('added channel group {0!r}'.format(group_name))
 
     @cm.command(name='removegroup', pass_context = True)
-    async def remove_group(self, ctx, group_name):
+    async def remove_group(self, ctx, group_name, delete):
         channel_groups = self.get_channel_groups(ctx.message.server)
         if group_name not in channel_groups:
             await self.bot.say('group {0!r} doesn\'t exist'.format(group_name))
@@ -111,6 +120,9 @@ class ChannelManager:
             del channel_groups[group_name]
             self.save_data()
             await self.bot.say('removing group {0!r}'.format(group_name))
+            if (delete=='true'):
+                for channel in self.get_channels_for_group(ctx.message.server, group_name):
+                    await self.bot.delete_channel(channel=channel)
 
     def create_channel_name(self, group_name, num):
         return '{group_name} #{num}'.format(group_name=group_name, num = num)
@@ -123,8 +135,11 @@ class ChannelManager:
     async def update_scheduler(self):
         while self == self.bot.get_cog('ChannelManager'):
             if not self.paused:
-                for server in self.bot.servers:
-                    await self.update_groups(server)
+                for server_id in self.data.keys():
+                    server = self.bot.get_server(server_id)
+                    logger.debug("attempting to get server with id {0}, result: {1}".format(server_id, server))
+                    if server:
+                        await self.update_groups(server)
             await asyncio.sleep(self.update_period)
 
 
@@ -147,6 +162,7 @@ class ChannelManager:
         channel_groups = self.get_channel_groups(server)
         for group_name in channel_groups:
             await self.update_group(server, group_name)
+        await self.fix_channel_positions(server)
 
     def get_channels_for_group(self, server, group_name):
         pattern = self.get_channel_name_pattern(group_name)
@@ -188,8 +204,6 @@ class ChannelManager:
                 chan_name = self.create_channel_name(group_name, free_nums[i])
                 await self.bot.create_channel(server = server, name=chan_name, type=ChannelType.voice)
 
-            return
-
         #check if we should and can remove some channels
         n_to_remove = len(empty_chans) - min_empty_channels
         if n_to_remove > 0:
@@ -203,38 +217,53 @@ class ChannelManager:
                     await self.bot.delete_channel(channel=chan_dict['channel'])
 
 
-    def fix_positions(self, server, group_name):
-        target_num_empty = 2
-        pattern = self.get_channel_name_pattern(group_name)
-        voice_chans = (channel for channel in server.channels if channel.type == ChannelType.voice)
-        group_chans = []
-        for channel in voice_chans:
-            match = pattern.match(channel.name)
-            if match:
-                chan_desc = {
-                    'channel': channel,
-                    'group_name': match.group(0),
-                    'num': match.group(1),
-                    'final_pos': None
-                }
-                group_chans.append(chan_desc)
-        logger.debug('found channels for group {0!r}: {1!r}'.format(group_name, [ch['channel'].name for ch in group_chans]))
-        group_chans.sort(key=itemgetter('num'))
-        first_chan_pos = group_chans[0]['channel'].position
-        for idx, chan_desc in enumerate(group_chans):
-            chan_desc['final_pos'] = first_chan_pos + idx
+    def get_voice_channels(self, server):
+        return [channel for channel in server.channels if channel.type == ChannelType.voice]
 
-        n_empty = 0
-        for idx, chan_desc in enumerate(group_chans):
-            if not chan_desc['channel'].voice_members:
-                n_empty = n_empty + 1
-            else:
-                n_empty = 0
-        #check if number of empty channels past the last occupied channel is too small, if so add more, else remove some
-        if  n_empty < target_num_empty:
-            pass
+    async def fix_channel_positions(self, server):
+        channel_groups = self.get_channel_groups(server)
+        channels = self.get_voice_channels(server)
+        channels.sort(key=lambda ch: ch.position)
+        channels_original = list(channels)
+        logger.debug("initial channel positions: {0}".format([ch.name for ch in channels]))
+        group_regexes = {group: self.get_channel_name_pattern(group) for group in channel_groups}
+        channels_by_group = {group: [] for group in channel_groups}
+        group_anchors = {}
+        for idx, channel in enumerate(list(channels)):
+            for group, regex in group_regexes.items():
+                chan_num = self.get_channel_number_in_group(group_name=group, channel=channel)
+                if chan_num is not None:
+                    if chan_num == 1:
+                        group_anchors[channel] = group
+                    elif chan_num != 1:
+                        channels.remove(channel)
+                        channels_by_group[group].append({'num': chan_num, 'channel': channel})
+        logger.debug('channels by group: {0}'.format(channels_by_group))
+        result_channels = []
+        for channel in channels:
+            if channel not in group_anchors:
+                #a channel that's not in any group (else it'd have been picked up in earlier processing, leave it where it is
+                result_channels.append(channel)
+            if channel in group_anchors:
+                result_channels.append(channel)
+                #first channel in a group, append it where it was
+                group = group_anchors[channel]
+                #get all channels in that group and add them in order
+                group_channels = channels_by_group[group]
+                group_channels.sort(key = itemgetter('num'))
+                for grp_channel in group_channels:
+                    result_channels.append(grp_channel['channel'])
+        logger.debug('final channel positions: {0}'.format([channel.name for channel in result_channels]))
+        changes = False
+        for i, channel in enumerate(result_channels):
+            if channel != channels_original[i]:
+                changes = True
+                break
+        if changes:
+            logger.debug("moving channels")
+            await self.move_channels(server,result_channels)
         else:
-            pass
+            logger.debug('no changes in channel order')
 
     def get_data_for_server_from_context(self, ctx):
         server = ctx.message.server
@@ -270,6 +299,39 @@ class ChannelManager:
             await self.bot.say(e)
         except KeyError as e:
             await self.bot.say('unknown variable {0!r}'.format(key))
+
+    @cm.command(name = 'movechans', pass_context = True)
+    async def shuffle(self,ctx, method='sort'):
+        logger.info('moving channels')
+        server = ctx.message.server
+        voice_chans = [channel for channel in server.channels if channel.type == ChannelType.voice]
+        if method=='sort':
+            logger.debug('sorting voice channels')
+            result = sorted(voice_chans, key=lambda chan: chan.name)
+        elif method=='random':
+            logger.debug('randomizing voice channels')
+            result = list(voice_chans)
+            random.shuffle(result)
+        #await self.move_chans(voice_chans, result)
+        await self.move_channels(server, result)
+
+    async def move_chans(self, orig, result):
+        original_positions = {chan: chan.position for chan in orig}
+        n_moved = 0
+        for new_pos, channel in enumerate(result):
+            orig_pos = original_positions[channel]
+            if orig_pos != new_pos:
+                n_moved = n_moved + 1
+                await self.bot.move_channel(channel=channel, position=new_pos)
+        logger.debug('moved {0}/{1} channels'.format(n_moved, len(result)))
+
+    async def move_channels(self, server, channels):
+
+        payload = [{'id': c.id, 'position': index} for index, c in enumerate(channels)]
+        url = '{0}/{1.id}/channels'.format(endpoints.SERVERS, server)
+        logger.debug('using url: {0}'.format(url))
+        logger.debug('using payload: {0!r}'.format(payload))
+        await self.bot.http.patch(url, json=payload, bucket="move_channel")
 
     def get_server_var(self, server, key):
         server_data = self.get_data_for_server(server)
