@@ -26,7 +26,7 @@ class ModuleReloader:
         if "cogs." not in module:
             module = "cogs." + module
         owner_cog = self.bot.get_cog('Owner')
-        logger.info("trying to reload module {0}".format(module))
+        logger.debug("trying to reload module {0}".format(module))
         try:
             owner_cog._unload_cog(module, reloading=True)
         except:
@@ -40,8 +40,8 @@ class ModuleReloader:
             logger.warn("module {0} does not have a setup function.".format(module))
         except CogLoadError as e:
             logger.error("loading module {0} failed".format(module))
-            logger.exception(e)
-            #traceback.print_exc()
+            #logger.exception(e)
+            traceback.print_exc()
         else:
             set_cog(module, True)
             await owner_cog.disable_commands()
