@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import re
+from datetime import datetime, timedelta
 from operator import itemgetter
 
 from discord import ChannelType, endpoints
@@ -16,6 +17,10 @@ default_server_vars = {
     'min_empty_channels': {
         'type': int,
         'value': 2
+    },
+    'channel_timeout': {
+        'type': int,
+        'value': 1 #minutes
     }
 }
 logger = logging.getLogger("red.channel_manager")
@@ -27,11 +32,12 @@ class ChannelManager:
         logger.info('loading module')
         self.paused = False
         self.update_period = 10
-
         self.bot = bot
         self.data = None
+        self.enabled = True
         self.baseDataPath = "data/channel_manager"
         self.dataFilePath = os.path.join(self.baseDataPath,"data.json")
+        self.channel_activity = {}
         logger.debug("attempting to load settings from {0}".format(self.dataFilePath))
         if not os.path.exists(self.baseDataPath):
             logger.debug("settings directory at path {0} doesn't exist, creating it")
@@ -66,6 +72,15 @@ class ChannelManager:
         if ctx.invoked_subcommand is None:
             await send_cmd_help(ctx)
             return
+    @cm.command()
+    async def enable(self):
+        self.enabled = True
+        await self.bot.say("channel management enabled")
+
+    @cm.command()
+    async def disable(self):
+        self.enabled = False
+        await self.bot.say("channel management disabled")
 
     @cm.command(pass_context=True)
     async def showdata(self,ctx):
@@ -134,7 +149,7 @@ class ChannelManager:
 
     async def update_scheduler(self):
         while self == self.bot.get_cog('ChannelManager'):
-            if not self.paused:
+            if self.enabled and not self.paused:
                 for server_id in self.data.keys():
                     server = self.bot.get_server(server_id)
                     logger.debug("attempting to get server with id {0}, result: {1}".format(server_id, server))
@@ -146,19 +161,15 @@ class ChannelManager:
     @cm.command(name = 'pause', pass_context=True)
     async def pause_loop(self):
         self.paused = not self.paused
-        await self.bot.say('updates are now {0!r}'.format(self.paused))
-
-    @cm.command(pass_context = True)
-    async def start(self):
-        self.paused = False
-        await self.bot.say('starting update loop')
-        await self.update_loop()
+        await self.bot.say('paused is now: {0!r}'.format(self.paused))
 
     @cm.command(name = 'upd', pass_context = True)
     async def upd(self, ctx):
         await self.update_groups(ctx.message.server)
 
     async def update_groups(self, server):
+        if not self.enabled:
+            return
         channel_groups = self.get_channel_groups(server)
         for group_name in channel_groups:
             await self.update_group(server, group_name)
@@ -213,14 +224,24 @@ class ChannelManager:
             empty_channels_with_number.sort(key=itemgetter('num'))
             for idx, chan_dict in enumerate(empty_channels_with_number):
                 if idx>=min_empty_channels:
-                    logger.debug("removing channel {0.name}".format(chan_dict['channel']))
-                    await self.bot.delete_channel(channel=chan_dict['channel'])
+                    channel = chan_dict['channel']
+                    last_activity = None
+                    if channel in self.channel_activity:
+                        last_activity = self.channel_activity[channel]
+                    timeout = timedelta(minutes = self.get_server_var(server,'channel_timeout'))
+                    if last_activity is None or ((datetime.now() - timeout) > last_activity):
+                        logger.debug("removing channel {0.name}".format(chan_dict['channel']))
+                        await self.bot.delete_channel(channel=chan_dict['channel'])
+                    else:
+                        logger.debug("not removing channel {0.name!r} due to recent activity".format(chan_dict['channel']))
 
 
     def get_voice_channels(self, server):
         return [channel for channel in server.channels if channel.type == ChannelType.voice]
 
     async def fix_channel_positions(self, server):
+        if not self.enabled:
+            return
         channel_groups = self.get_channel_groups(server)
         channels = self.get_voice_channels(server)
         channels.sort(key=lambda ch: ch.position)
@@ -333,6 +354,7 @@ class ChannelManager:
         logger.debug('using payload: {0!r}'.format(payload))
         await self.bot.http.patch(url, json=payload, bucket="move_channel")
 
+
     def get_server_var(self, server, key):
         server_data = self.get_data_for_server(server)
         if key in server_data:
@@ -371,7 +393,32 @@ def findByName(channels, name):
         if (channel.name==name):
             return channel
 
+
 def setup(bot):
     cm = ChannelManager(bot)
     bot.add_cog(cm)
     bot.loop.create_task(cm.update_scheduler())
+
+    async def on_channel_create(channel):
+        logger.info("on_channel_create, channel: {0}".format(channel))
+        await cm.fix_channel_positions(channel.server)
+
+    async def on_channel_update(before, after):
+        pass
+        #await cm.update_groups(before.server)
+
+    async def on_voice_state_update(before, after):
+        chan_before = before.voice.voice_channel
+        chan_after = after.voice.voice_channel
+        if chan_before:
+            cm.channel_activity[chan_before] = datetime.now()
+        if chan_after:
+            cm.channel_activity[chan_after] = datetime.now()
+        logger.info(cm.channel_activity)
+        await cm.update_groups(before.server)
+        logger.info('on_voice_state_update, channel {chan_after},{chan_before}, before: {0}, after: {1}'.format(before,after, chan_before=chan_before, chan_after=chan_after))
+
+
+    bot.add_listener(on_channel_create, 'on_channel_create')
+    bot.add_listener(on_channel_update, 'on_channel_update')
+    bot.add_listener(on_voice_state_update, 'on_voice_state_update')
