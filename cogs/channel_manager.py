@@ -350,7 +350,7 @@ class ChannelManager:
         # await self.move_chans(voice_channels, result)
         await self.move_channels(server, result)
 
-    async def move_chans(self, orig: List[discord.Channel], result: List[discord.Channel]) -> None:
+    async def move_chans(self, orig: List[Channel], result: Dict[int, Channel]) -> None:
         original_positions = {chan: chan.position for chan in orig}
         n_moved = 0
         for new_pos, channel in enumerate(result):
