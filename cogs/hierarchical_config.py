@@ -1,4 +1,5 @@
 import json
+from json.decoder import JSONDecoder
 from json.encoder import JSONEncoder
 from typing import Dict, List, Union, NewType
 
@@ -21,12 +22,17 @@ class Location:
 
 
 class HierarchicalConfig:
-    def __init__(self, defaults: Dict[str, ValueType] = None):
-        self.data = Location() # type: Location
-        self.defaults = {} if defaults is None else defaults  # type: Dict[str, ValueType]
+    def __init__(self, defaults: Dict[str, ValueType] = None, data: Location = None):
+        self.data = data if data else Location() # type: Location
+        self.defaults = defaults if defaults else {}  # type: Dict[str, ValueType]
 
-    def dumps_json(self):
-        return json.dumps(self, cls=HierarchicalConfigJsonEncoder)
+    def __eq__(self, other):
+        if not isinstance(other, HierarchicalConfig):
+            return False
+        elif self.defaults != other.defaults:
+            return False
+        else:
+            return self.data == self.data
 
     def ensure_path(self, path: List[str]) -> Dict[str, Dict]:
         if len(path) == 0:
@@ -65,12 +71,3 @@ class HierarchicalConfig:
             else:
                 break
         return value
-
-
-class HierarchicalConfigJsonEncoder(JSONEncoder):
-    def default(self, o):
-        if isinstance(o, HierarchicalConfig) or isinstance(o, Location):
-            json_str = json.dumps(o.__dict__, cls = HierarchicalConfigJsonEncoder)
-            return json_str
-        return JSONEncoder.default(self, o)
-

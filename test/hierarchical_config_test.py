@@ -1,6 +1,8 @@
 import json
 import unittest
 
+import jsonpickle
+
 from cogs.hierarchical_config import HierarchicalConfig, Location
 
 
@@ -93,9 +95,9 @@ class TestSettings(unittest.TestCase):
         config.save_var(['a1', 'b1'], 'var2', 'abc')
         config.save_var(['a1'], 'var3', [1,2,3])
 
-        json_str = config.dumps_json()
+        json_str = jsonpickle.encode(config)
 
-        loaded_config = json.loads(json_str)
+        loaded_config = jsonpickle.decode(json_str)
 
         self.assertEquals(config, loaded_config)
 
