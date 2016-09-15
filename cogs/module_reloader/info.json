@@ -1,0 +1,7 @@
+﻿{
+    "AUTHOR" : "Michał Barczewski",
+    "INSTALL_MSG" : "",
+    "NAME" : "module_reloader",
+    "SHORT" : "Watches cogs for changers and reload them automatically",
+    "DESCRIPTION" : "Cog that watches all files in cogs for changes and automatically reloads them, mostly for development"
+}

@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "Michał Barczewski",
+    "INSTALL_MSG" : "",
+    "NAME" : "hierarchical_config",
+    "SHORT" : "Library for storing configuration, not a standalone cog",
+    "DESCRIPTION" : ""
+}
