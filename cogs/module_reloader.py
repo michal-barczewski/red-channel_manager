@@ -11,6 +11,8 @@ from red import set_cog
 
 logger = logging.getLogger("red.module_reloader")
 logger.setLevel(logging.DEBUG)
+
+
 class ModuleReloader:
     def __init__(self, bot):
         logger.debug('loading module')
@@ -40,7 +42,7 @@ class ModuleReloader:
             logger.warn("module {0} does not have a setup function.".format(module))
         except CogLoadError as e:
             logger.error("loading module {0} failed".format(module))
-            #logger.exception(e)
+            # logger.exception(e)
             traceback.print_exc()
         else:
             set_cog(module, True)
@@ -65,8 +67,6 @@ class ModuleReloader:
         for f in modules:
             await self.reload_module(f)
 
-
-
     async def update_scheduler(self):
         while self == self.bot.get_cog('ModuleReloader'):
             logger.debug('checking for modified cogs')
@@ -76,22 +76,23 @@ class ModuleReloader:
                 await self.reload_modules(modified)
             await asyncio.sleep(self.update_period)
 
-    @commands.command(name='listcogs', pass_context = True)
+    @commands.command(name='listcogs', pass_context=True)
     async def _list_cogs(self):
         cogs = [os.path.realpath(f) for f in glob.glob("cogs/*.py")]
         for c in cogs:
             pass
         await self.bot.say('cogs: {0}'.format(cogs))
-    @commands.command(name='checkmodified', pass_context = True)
+
+    @commands.command(name='checkmodified', pass_context=True)
     async def check_modified_cmd(self):
         modified = self.check_for_modifications()
         await self.reload_modules(modified)
         await self.bot.say('modified cogs: {0}'.format(modified))
 
-
-    @commands.command(name='mrreload', pass_context = True)
+    @commands.command(name='mrreload', pass_context=True)
     async def reload_cmd(self, ctx, module):
         await self.reload_module(module)
+
 
 def setup(bot):
     mr = ModuleReloader(bot)
