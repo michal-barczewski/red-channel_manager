@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 
 import jsonpickle
@@ -7,7 +8,6 @@ from cogs.hierarchical_config import HierarchicalConfig, Location
 
 
 class TestSettings(unittest.TestCase):
-
     def testEnsurePath(self):
         config = HierarchicalConfig()
 
@@ -69,7 +69,7 @@ class TestSettings(unittest.TestCase):
         read_value = config.get_var(path, name)
         self.assertEquals(123, read_value)
 
-        config.save_var([],"name", "v_root")
+        config.save_var([], "name", "v_root")
         config.save_var(['lvl_1_a'], "name", "v_1a")
 
         default_value = config.get_var(['lvl_1_b'], 'name')
@@ -93,13 +93,30 @@ class TestSettings(unittest.TestCase):
 
         config.save_var([], 'var1', 1)
         config.save_var(['a1', 'b1'], 'var2', 'abc')
-        config.save_var(['a1'], 'var3', [1,2,3])
+        config.save_var(['a1'], 'var3', [1, 2, 3])
 
         json_str = jsonpickle.encode(config)
 
         loaded_config = jsonpickle.decode(json_str)
 
         self.assertEquals(config, loaded_config)
+
+    def testSaveLoad(self):
+        config = HierarchicalConfig()
+        config.save_var([], 'var1', 10)
+        config.save_var(['place'], 'athing', [{'abc': 234}])
+        path = './data/'
+        if not os.path.exists(path):
+            os.mkdir(path)
+        file_name = 'config.json'
+        file_path = os.path.join(path, file_name)
+        config.save(file_path)
+
+        loaded_config = HierarchicalConfig()
+        loaded_config.load(file_path)
+
+        self.assertEquals(config, loaded_config)
+
 
 if __name__ == '__main__':
     unittest.main()

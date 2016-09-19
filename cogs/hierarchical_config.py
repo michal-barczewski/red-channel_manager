@@ -1,7 +1,6 @@
-import json
-from json.decoder import JSONDecoder
-from json.encoder import JSONEncoder
 from typing import Dict, List, Union, NewType
+
+import jsonpickle
 
 BaseValueType = NewType('BaseValueType', Union[str, int, float])
 ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType]])
@@ -23,7 +22,7 @@ class Location:
 
 class HierarchicalConfig:
     def __init__(self, defaults: Dict[str, ValueType] = None, data: Location = None):
-        self.data = data if data else Location() # type: Location
+        self.data = data if data else Location()  # type: Location
         self.defaults = defaults if defaults else {}  # type: Dict[str, ValueType]
 
     def __eq__(self, other):
@@ -71,3 +70,15 @@ class HierarchicalConfig:
             else:
                 break
         return value
+
+    def save(self, file_name: str):
+        with open(file_name, 'w+') as config_file:
+            jsonpickle.set_preferred_backend('simplejson')
+            jsonpickle.set_encoder_options('simplejson', sort_keys=True, indent=4)
+            json_str = jsonpickle.encode(self.data)
+            config_file.write(json_str)
+
+    def load(self, file_name: str):
+        with open(file_name, 'r') as config_file:
+            json_str = config_file.read()
+            self.data = jsonpickle.decode(json_str)
