@@ -143,6 +143,10 @@ class ChannelManager:
                 for channel in self.get_channels_for_group(ctx.message.server, group_name):
                     await self.bot.delete_channel(channel=channel)
 
+    @cm.command(name='listgroups', pass_context=True)
+    async def list_groups(self, ctx):
+        await self.bot.say('{0}'.format(self.get_channel_groups(ctx.message.server)))
+
     @staticmethod
     def create_channel_name(group_name, num):
         return '{group_name} #{num}'.format(group_name=group_name, num=num)
@@ -351,7 +355,6 @@ class ChannelManager:
         await self.move_channels(server, result)
 
     async def move_channels(self, server: discord.Server, channels: List[discord.Channel]):
-
         payload = [{'id': c.id, 'position': index} for index, c in enumerate(channels)]
         url = '{0}/{1.id}/channels'.format(endpoints.SERVERS, server)
         logger.debug('using url: {0}'.format(url))

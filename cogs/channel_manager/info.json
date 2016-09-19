@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "Michał Barczewski",
+    "INSTALL_MSG" : "Channel manager installed, make sure to run 'pip install -r channel_manager_requirements.txt' to install dependencies",
+    "NAME" : "channel_manager",
+    "SHORT" : "Automatic channel creation and management",
+    "DESCRIPTION" : "Allows for adding groups of channels that will be automatically managed, creates and deletes channels maintain specified number of empty channels"
+}
