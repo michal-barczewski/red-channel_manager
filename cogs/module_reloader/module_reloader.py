@@ -10,7 +10,7 @@ from cogs.owner import CogNotFoundError, NoSetupError, CogLoadError
 from red import set_cog
 
 logger = logging.getLogger("red.module_reloader")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 class ModuleReloader:
@@ -50,6 +50,7 @@ class ModuleReloader:
 
     def check_for_modifications(self):
         cogs = glob.glob('cogs/*.py')
+        logger.debug('found files to check for modifiction: {0}'.format(cogs))
         after = {f: os.stat(os.path.realpath(f)) for f in cogs}
         if not self.prev:
             self.prev = after

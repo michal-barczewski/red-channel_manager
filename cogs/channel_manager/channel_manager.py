@@ -33,6 +33,7 @@ logger.setLevel(logging.DEBUG)
 class ChannelManager:
     def __init__(self, bot):
         logger.info('loading module')
+
         self.paused = False
         self.update_period = 10
         self.bot = bot
@@ -93,13 +94,13 @@ class ChannelManager:
         await self.bot.say(self.data)
 
     @cm.command(pass_context=True)
-    async def addchan(self, ctx, new_name: str):
+    async def addchan(self, ctx, new_name: str, user_limit):
         server = ctx.message.server
         if server is not None:
             msg = "trying to create channel with name {new_name}, on server {server}".format(new_name=new_name,
                                                                                              server=server)
             await self.bot.say(msg)
-            new_chan = await self.bot.create_channel(server=server, name=new_name, type=ChannelType.voice)
+            new_chan = await self.create_channel(server=server, name=new_name, type=ChannelType.voice, user_limit=6)
             await self.bot.say("created channel {0}".format(new_chan))
             # await self.bot.say(all_chans)
         else:
@@ -145,7 +146,9 @@ class ChannelManager:
 
     @cm.command(name='listgroups', pass_context=True)
     async def list_groups(self, ctx):
-        await self.bot.say('{0}'.format(self.get_channel_groups(ctx.message.server)))
+        groups_list = [group_name for group_name, _ in self.get_channel_groups(ctx.message.server).items()]
+        groups_list.sort()
+        await self.bot.say('\n'.join(groups_list))
 
     @staticmethod
     def create_channel_name(group_name, num):
@@ -217,7 +220,7 @@ class ChannelManager:
                 chan_numbers.append(num)
         n_channels_to_create = max(0, min_empty_channels - len(empty_chans))
         if n_channels_to_create > 0:
-            logger.info('group {0} has {1!r} empty channels, min_empty is {min_empty},'
+            logger.info('group {0!r} has {1!r} empty channels, min_empty is {min_empty}, '
                         'will create {n_channels_to_create!r} channels'
                         .format(group_name, len(empty_chans), min_empty=min_empty_channels,
                                 n_channels_to_create=n_channels_to_create))
@@ -229,7 +232,7 @@ class ChannelManager:
         # check if we should and can remove some channels
         n_to_remove = len(empty_chans) - min_empty_channels
         if n_to_remove > 0:
-            logger.info('group {group_name} has {n_empty!r} empty channels,'
+            logger.info('group {group_name!r} has {n_empty!r} empty channels, '
                         'will attempt to remove {n_to_remove!r} channels'
                         .format(group_name=group_name, n_empty=len(empty_chans), n_to_remove=n_to_remove))
             # create a list of empty channels sorted by number, remove the highest numbered ones
@@ -239,16 +242,22 @@ class ChannelManager:
             for idx, chan_dict in enumerate(empty_channels_with_number):
                 if idx >= min_empty_channels:
                     channel = chan_dict['channel']
-                    last_activity = None
-                    if channel in self.channel_activity:
-                        last_activity = self.channel_activity[channel]
-                    timeout = timedelta(minutes=self.get_server_var(server, 'channel_timeout'))
-                    if last_activity is None or ((datetime.now() - timeout) > last_activity):
-                        logger.debug("removing channel {0.name}".format(chan_dict['channel']))
-                        await self.bot.delete_channel(channel=chan_dict['channel'])
-                    else:
-                        logger.debug("not removing channel {0.name!r} due to recent activity"
-                                     .format(chan_dict['channel']))
+                    await self.delete_channel(server, channel)
+
+    async def delete_channel(self, server, channel, force=False):
+        if force:
+            await self.bot.delete_channel(channel=channel)
+
+        last_activity = None
+        if channel in self.channel_activity:
+            last_activity = self.channel_activity[channel]
+        timeout = timedelta(minutes=self.get_server_var(server, 'channel_timeout'))
+        if last_activity is None or ((datetime.now() - timeout) > last_activity):
+            logger.debug("removing channel {0.name}".format(channel))
+            await self.bot.delete_channel(channel=channel)
+        else:
+            logger.debug("not removing channel {0.name!r} due to recent activity"
+                         .format(channel))
 
     @staticmethod
     def get_voice_channels(server):
@@ -258,7 +267,7 @@ class ChannelManager:
         if not self.enabled:
             return
         channel_groups = self.get_channel_groups(server)
-        channels = self.get_voice_channels(server)
+        channels = self.get_voice_channels(server)  # type: List[discord.Channel]
         channels.sort(key=lambda ch: ch.position)
         channels_original = list(channels)
         logger.debug("initial channel positions: {0}".format([ch.name for ch in channels]))
@@ -288,8 +297,12 @@ class ChannelManager:
                 # get all channels in that group and add them in order
                 group_channels = channels_by_group[group]
                 group_channels.sort(key=itemgetter('num'))
+                user_limit = channel.user_limit
                 for grp_channel in group_channels:
-                    result_channels.append(grp_channel['channel'])
+                    group_channel = grp_channel['channel']  # type: discord.Channel
+                    if group_channel.user_limit != user_limit:
+                        await self.bot.http.edit_channel(group_channel.id, user_limit=user_limit)
+                    result_channels.append(group_channel)
         logger.debug('final channel positions: {0}'.format([channel.name for channel in result_channels]))
         changes = False
         for i, channel in enumerate(result_channels):
@@ -348,11 +361,14 @@ class ChannelManager:
             logger.debug('sorting voice channels')
             result = sorted(voice_channels, key=lambda chan: chan.name)
         elif method == 'random':
-            logger.debug('randomizing voice channels')
+            logger.debug('randomizing voice channels: {0!r}'.format(voice_channels))
             result = list(voice_channels)
             random.shuffle(result)
+        else:
+            await self.bot.say('Specified method {0!r} is not valid'.format(method))
+            return
         # await self.move_chans(voice_channels, result)
-        await self.move_channels(server, result)
+        await self.move_channels(server, channels=result)
 
     async def move_channels(self, server: discord.Server, channels: List[discord.Channel]):
         payload = [{'id': c.id, 'position': index} for index, c in enumerate(channels)]
@@ -360,6 +376,21 @@ class ChannelManager:
         logger.debug('using url: {0}'.format(url))
         logger.debug('using payload: {0!r}'.format(payload))
         await self.bot.http.patch(url, json=payload, bucket="move_channel")
+
+    async def create_channel(self, server: discord.Server, name: str, channel_type: ChannelType, user_limit: int,
+                             permission_overwrites=None):
+        url = '{0.GUILDS}/{1}/channels'.format(self, server.id)
+        payload = {
+            'name': name,
+            'type': channel_type
+        }
+        if user_limit is not None:
+            payload['user_limit'] = user_limit
+
+        if permission_overwrites is not None:
+            payload['permission_overwrites'] = permission_overwrites
+
+        return self.bot.http.post(url, json=payload, bucket="create_channel")
 
     def get_server_var(self, server: discord.Server, key: str) -> Union[str, int, float]:
         server_data = self.get_data_for_server(server)
@@ -379,7 +410,6 @@ class ChannelManager:
         data = self.get_data_for_server(server)
         if 'channelGroups' not in data:
             data['channelGroups'] = {}
-            self.save_data()
         return data['channelGroups']
 
 
@@ -411,9 +441,9 @@ def setup(bot):
         logger.info("on_channel_create, channel: {0}".format(channel))
         await cm.fix_channel_positions(channel.server)
 
-    async def on_channel_update(before, after):
-        pass
-        # await cm.update_groups(before.server)
+    # async def on_channel_update(before, after):
+    #   pass
+    #   await cm.update_groups(before.server)
 
     async def on_voice_state_update(before, after):
         chan_before = before.voice.voice_channel
@@ -428,5 +458,5 @@ def setup(bot):
                     .format(before, after, chan_before=chan_before, chan_after=chan_after))
 
     bot.add_listener(on_channel_create, 'on_channel_create')
-    bot.add_listener(on_channel_update, 'on_channel_update')
+    #bot.add_listener(on_channel_update, 'on_channel_update')
     bot.add_listener(on_voice_state_update, 'on_voice_state_update')
