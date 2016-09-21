@@ -5,14 +5,13 @@ import random
 import re
 from datetime import datetime, timedelta
 from operator import itemgetter
-from typing import Any, List, Dict, Union, Set, Callable, Iterable
+from typing import Any, List, Dict, Union, Set, Callable, Iterable, NewType
 
 import discord
 from discord import ChannelType, endpoints
 from discord.channel import Channel
 from discord.ext import commands
 
-from cogs.hierarchical_config import HierarchicalConfig
 from cogs.utils import checks
 from red import send_cmd_help
 
@@ -21,11 +20,121 @@ try:
 except ImportError:
     jsonpickle = None
 
+logger = logging.getLogger("red.channel_manager")
+logger.setLevel(logging.DEBUG)
+
+BaseValueType = NewType('BaseValueType', Union[str, int, float])
+ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType],
+                                       Set[BaseValueType], Dict[str, BaseValueType]])
+
+
+class Location:
+    def __init__(self, locations: Dict = None, values: Dict[str, ValueType] = None) -> object:
+        self.locations = locations if locations else {}  # type: Dict[str, Location]
+        self.values = values if values else {}  # type: Dict[str, ValueType]
+
+    def __eq__(self, other):
+        if not isinstance(other, Location):
+            return False
+        elif self.locations != other.locations:
+            return False
+        else:
+            return self.values == other.values
+
+
+class HierarchicalConfig:
+    def __init__(self, defaults: Dict[str, ValueType] = None, data: Location = None):
+        self.data = data if data else Location()  # type: Location
+        self.defaults = defaults if defaults else {}  # type: Dict[str, ValueType]
+
+    def __eq__(self, other):
+        if not isinstance(other, HierarchicalConfig):
+            return False
+        elif self.defaults != other.defaults:
+            return False
+        else:
+            return self.data == self.data
+
+    def ensure_path(self, path: List[str]) -> Location:
+        if path is None or len(path) == 0:
+            return self.data
+        location = self.data  # type: Location
+        for key in path:
+            if key not in location.locations:
+                location.locations[key] = Location()
+            location = location.locations[key]
+        return location
+
+    def get_location(self, path: List[str]):
+        location = self.data
+        for key in path:
+            if key in location.locations:
+                location = location.locations[key]
+        return location
+
+    def set_var(self, name: str, value: ValueType, path: List[str] = None):
+        if isinstance(value, (str, int, float, List, Set, Dict)):
+            location = self.ensure_path(path)
+            location.values[name] = value
+        else:
+            raise TypeError('value should be one of following types: str, int, float, List, Set, Dict')
+
+    def delete_var(self, path: List[str], name: str):
+        location = self.get_location(path)
+        if name in location.values[name]:
+            del location.values[name]
+
+    def get_var(self, name: str, path: Iterable[str] = None) -> ValueType:
+        """Retrieve variable value from specified path
+
+        If value doesn't exist at specified path, it is looked up recursively at lower levels,
+        stopping at the default value
+
+        If variable is of mutable type then a copy of it will be returned, to modify it use set_var with copy as value
+
+        :param name: name of the variable to retrieve
+        :param path: path of the variable
+        :return: value of the variable
+        """
+
+        value = self.data.values.get(name, self.defaults.get(name))
+        location = self.data
+        if not path:
+            return value
+        for key in path:
+            # get value from current location, preserve existing one if it doesn't exist here
+            if key in location.locations:
+                location = location.locations[key]
+                value = location.values.get(name, value)
+            else:
+                break
+        logger.debug('retrieved variable {0!r}: value {1!r}, type {2!r}'.format(name, value, type(value)))
+        if isinstance(value, (str, int, float)) or value is None:
+            return value
+        elif isinstance(value, (List, Set, Dict)):
+            return value.copy()
+        else:
+            raise TypeError('tried to retrieve value of unsupported type (this should not be possible)')
+
+    def save(self, file_name: str):
+        with open(file_name, 'w+') as config_file:
+            jsonpickle.set_preferred_backend('simplejson')
+            jsonpickle.set_encoder_options('simplejson', sort_keys=True, indent=4)
+            json_str = jsonpickle.encode(self.data)
+            config_file.write(json_str)
+
+    def load(self, file_name: str):
+        with open(file_name, 'r') as config_file:
+            json_str = config_file.read()
+            self.data = jsonpickle.decode(json_str)
+
+
 default_server_vars = {
     'min_empty_channels': {
         'type': int,
         'value': 2,
-        'help': 'Minimum amount of channels that should be present in the group, if there are more/less channels will be created/remove'
+        'help': 'Minimum amount of channels that should be present in the group, '
+                'if there are more/less channels will be created/remove'
     },
     'channel_timeout': {
         'type': int,
@@ -38,12 +147,11 @@ default_server_vars = {
         'help': 'Default user_limit to set for new groups, currently does not work'
     }
 }
-def get_vars_list_for_help():
-    var_lines=['{0:20s} - {help}'.format(var_name, **var) for var_name, var in default_server_vars.items()]
-    return 'Variables:\n'+('\n'.join(var_lines))
 
-logger = logging.getLogger("red.channel_manager")
-logger.setLevel(logging.DEBUG)
+
+def get_vars_list_for_help():
+    var_lines = ['{0:20s} - {help}'.format(var_name, **var) for var_name, var in default_server_vars.items()]
+    return 'Variables:\n' + ('\n'.join(var_lines))
 
 
 class ChannelManager:
@@ -108,7 +216,7 @@ class ChannelManager:
 
     @cm.command(help='Enables channel management')
     async def enable(self):
-        #TODO: make this a per server setting
+        # TODO: make this a per server setting
         self.enabled = True
         await self.bot.say("Channel management enabled.")
 
@@ -122,9 +230,9 @@ class ChannelManager:
         await self.bot.say("Channel management is: {0}".format("enabled" if self.enable else "disabled"))
 
     @cm.group(pass_context=True, help='Debug functions, not for normal usage')
-    async def debug(self,ctx):
+    async def debug(self, ctx):
         if ctx.invoked_subcommand is None:
-            await send_cmd_help()
+            await send_cmd_help(ctx)
             return
 
     @debug.command(help='Prints current configuration')
@@ -138,7 +246,7 @@ class ChannelManager:
                                                                                          server=server)
         await self.bot.say(msg)
         await self.create_channel(server=server, name=new_name, type=ChannelType.voice,
-                                             user_limit=self.get_server_var(ctx.message.server,'user_limit'))
+                                  user_limit=user_limit)
 
     @debug.command(pass_context=True)
     async def listchans(self, ctx):
@@ -194,9 +302,9 @@ class ChannelManager:
         if not servers:
             servers = set()
         servers.add(server.id)
-        self.config.set_var('server_ids',servers)
+        self.config.set_var('server_ids', servers)
 
-        channel_groups = self.config.get_var('channel_groups',[server.id])  # type: Set[str]
+        channel_groups = self.config.get_var('channel_groups', [server.id])  # type: Set[str]
         if channel_groups is None:
             channel_groups = set()
         channel_groups.add(group_name)
@@ -232,14 +340,14 @@ class ChannelManager:
     async def list_groups(self, ctx):
         channel_groups = self.config.get_var('channel_groups', [ctx.message.server.id])
         if channel_groups:
-            message = create_message_from_list(prefix='Channel groups:\n', line_format='{0}', list=sorted(channel_groups))
+            message = create_message_from_list(prefix='Channel groups:\n', line_format='{0}',
+                                               list=sorted(channel_groups))
             await self.bot.say(message)
         else:
             await self.bot.say('There are no channel groups.')
 
-
     @cm.command(name='get', pass_context=True, no_pm=True,
-                help='Get value of server variable\n'+get_vars_list_for_help())
+                help='Get value of server variable\n' + get_vars_list_for_help())
     async def _cm_get(self, ctx, var_name: str):
         if var_name is None:
             await self.bot.say('available variables are: {0!r}'.format(default_server_vars.keys()))
@@ -248,7 +356,7 @@ class ChannelManager:
             await self.bot.say('{0} = {1!r}'.format(var_name, value))
 
     @cm.command(name='set', pass_context=True, no_pm=True,
-                help='Set value of server variable\n'+get_vars_list_for_help())
+                help='Set value of server variable\n' + get_vars_list_for_help())
     async def _cm_set(self, ctx, var_name: str, value: str):
         server = ctx.message.server
         try:
@@ -298,8 +406,8 @@ class ChannelManager:
     async def create_group_channel(self, server, group_name, num):
         chan_name = self.create_channel_name(group_name, num)
         logger.info('group {0!r} had no channels, creating new channel with name {1!r}'.format(group_name, chan_name))
-        user_limit = self.get_server_var(server, 'user_limit')
-        #await self.create_channel(server=server, name=chan_name, type=ChannelType.voice, user_limit=user_limit)
+        #user_limit = self.get_server_var(server, 'user_limit')
+        # await self.create_channel(server=server, name=chan_name, type=ChannelType.voice, user_limit=user_limit)
         await self.bot.create_channel(server=server, name=chan_name, type=ChannelType.voice)
 
     async def update_scheduler(self):
@@ -387,7 +495,7 @@ class ChannelManager:
         if force:
             await self.bot.delete_channel(channel=channel)
 
-        if not self.channel_is_active(server,channel):
+        if not self.channel_is_active(server, channel):
             logger.debug("removing channel {0.name}".format(channel))
             await self.bot.delete_channel(channel=channel)
         else:
@@ -458,14 +566,14 @@ class ChannelManager:
 
     async def create_channel(self, server: discord.Server, name: str, type: ChannelType, user_limit: int,
                              permission_overwrites=None):
-        #doesn't work atm, reason unknown
-        url = discord.http.HTTPClient.GUILDS+'/{0}/channels'.format(server.id)
+        # doesn't work atm, reason unknown
+        url = discord.http.HTTPClient.GUILDS + '/{0}/channels'.format(server.id)
         payload = {
             'name': name,
             'type': str(type),
             'permission_overwrites': []
         }
-        #if user_limit is not None:
+        # if user_limit is not None:
         #    payload['user_limit'] = user_limit
 
         if permission_overwrites is not None:
@@ -476,12 +584,13 @@ class ChannelManager:
         return self.bot.http.post(url, json=payload, bucket="create_channel")
 
 
-def create_message_from_list(prefix: str, line_format: str, list: Iterable[Any]):
-    message_lines = ['```',prefix]
-    lines = [line_format.format(line_args) for line_args in list]
+def create_message_from_list(prefix: str, line_format: str, message_list: Iterable[Any]):
+    message_lines = ['```', prefix]
+    lines = [line_format.format(line_args) for line_args in message_list]
     message_lines.extend(lines)
     message_lines.append('```')
     return "\n".join(message_lines)
+
 
 def find_free_numbers(numbers: List[int], n_to_find: int):
     free_numbers = []
@@ -501,16 +610,17 @@ def find_by_name(channels: List[Channel], name: str):
         if channel.name == name:
             return channel
 
+
 def install_dep(dep_name):
     try:
         import pip
-        logger.debug('trying to install: '+dep_name)
+        logger.debug('trying to install: ' + dep_name)
         pip.main(['install', dep_name])
     except Exception as e:
         logger.error(e)
 
-def setup(bot):
 
+def setup(bot):
     if jsonpickle is None:
         raise RuntimeError("Required dependency 'jsonpickle' missing.\n"
                            "You need to run 'pip3 install jsonpickle'")
@@ -536,5 +646,5 @@ def setup(bot):
                     .format(before, after, chan_before=chan_before, chan_after=chan_after))
 
     bot.add_listener(on_channel_create, 'on_channel_create')
-    #bot.add_listener(on_channel_update, 'on_channel_update')
+    # bot.add_listener(on_channel_update, 'on_channel_update')
     bot.add_listener(on_voice_state_update, 'on_voice_state_update')
