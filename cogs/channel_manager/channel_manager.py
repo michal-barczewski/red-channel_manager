@@ -31,7 +31,7 @@ default_server_vars = {
     'user_limit': {
         'type': int,
         'value': 0,
-        'help': 'Default user_limit to set for new groups'
+        'help': 'Default user_limit to set for new groups, currently does not work'
     }
 }
 def get_vars_list_for_help():
@@ -133,8 +133,8 @@ class ChannelManager:
         msg = "trying to create channel with name {new_name}, on server {server}".format(new_name=new_name,
                                                                                          server=server)
         await self.bot.say(msg)
-        new_chan = await self.bot.create_channel(server=server, name=new_name, type=ChannelType.voice)
-        await self.bot.say("created channel {0}".format(new_chan))
+        await self.create_channel(server=server, name=new_name, type=ChannelType.voice,
+                                             user_limit=self.get_server_var(ctx.message.server,'user_limit'))
 
     @debug.command(pass_context=True)
     async def listchans(self, ctx):
@@ -294,6 +294,8 @@ class ChannelManager:
     async def create_group_channel(self, server, group_name, num):
         chan_name = self.create_channel_name(group_name, num)
         logger.info('group {0!r} had no channels, creating new channel with name {1!r}'.format(group_name, chan_name))
+        user_limit = self.get_server_var(server, 'user_limit')
+        #await self.create_channel(server=server, name=chan_name, type=ChannelType.voice, user_limit=user_limit)
         await self.bot.create_channel(server=server, name=chan_name, type=ChannelType.voice)
 
     async def update_scheduler(self):
@@ -373,9 +375,9 @@ class ChannelManager:
             last_activity = self.channel_activity[channel]
         timeout = timedelta(minutes=self.get_server_var(server, 'channel_timeout'))
         if last_activity is None or ((datetime.now() - timeout) > last_activity):
-            return True
-        else:
             return False
+        else:
+            return True
 
     async def delete_channel(self, server, channel, force=False):
         if force:
@@ -450,19 +452,23 @@ class ChannelManager:
         logger.debug('using payload: {0!r}'.format(payload))
         await self.bot.http.patch(url, json=payload, bucket="move_channel")
 
-    async def create_channel(self, server: discord.Server, name: str, channel_type: ChannelType, user_limit: int,
+    async def create_channel(self, server: discord.Server, name: str, type: ChannelType, user_limit: int,
                              permission_overwrites=None):
-        url = '{0.GUILDS}/{1}/channels'.format(self, server.id)
+        #doesn't work atm, reason unknown
+        url = discord.http.HTTPClient.GUILDS+'/{0}/channels'.format(server.id)
         payload = {
             'name': name,
-            'type': channel_type
+            'type': str(type),
+            'permission_overwrites': []
         }
-        if user_limit is not None:
-            payload['user_limit'] = user_limit
+        #if user_limit is not None:
+        #    payload['user_limit'] = user_limit
 
         if permission_overwrites is not None:
             payload['permission_overwrites'] = permission_overwrites
 
+        logger.debug('url: {0}'.format(url))
+        logger.debug('payload: {0}'.format(payload))
         return self.bot.http.post(url, json=payload, bucket="create_channel")
 
 
