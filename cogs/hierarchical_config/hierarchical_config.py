@@ -164,4 +164,5 @@ class Variable:
 
 
 def setup(bot):
-    pass
+    if jsonpickle is None:
+        raise RuntimeError("You need to run `pip3 install jsonpickle`")

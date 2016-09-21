@@ -8,7 +8,6 @@ from operator import itemgetter
 from typing import Any, List, Dict, Union, Set, Callable, Iterable
 
 import discord
-import jsonpickle
 from discord import ChannelType, endpoints
 from discord.channel import Channel
 from discord.ext import commands
@@ -16,6 +15,11 @@ from discord.ext import commands
 from cogs.hierarchical_config import HierarchicalConfig
 from cogs.utils import checks
 from red import send_cmd_help
+
+try:
+    import jsonpickle
+except ImportError:
+    jsonpickle = None
 
 default_server_vars = {
     'min_empty_channels': {
@@ -497,8 +501,20 @@ def find_by_name(channels: List[Channel], name: str):
         if channel.name == name:
             return channel
 
+def install_dep(dep_name):
+    try:
+        import pip
+        logger.debug('trying to install: '+dep_name)
+        pip.main(['install', dep_name])
+    except Exception as e:
+        logger.error(e)
 
 def setup(bot):
+
+    if jsonpickle is None:
+        raise RuntimeError("Required dependency 'jsonpickle' missing.\n"
+                           "You need to run 'pip3 install jsonpickle'")
+
     cm = ChannelManager(bot)
     bot.add_cog(cm)
     bot.loop.create_task(cm.update_scheduler())
