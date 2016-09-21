@@ -20,17 +20,24 @@ from red import send_cmd_help
 default_server_vars = {
     'min_empty_channels': {
         'type': int,
-        'value': 2
+        'value': 2,
+        'help': 'Minimum amount of channels that should be present in the group, if there are more/less channels will be created/remove'
     },
     'channel_timeout': {
         'type': int,
-        'value': 1  # minutes
+        'value': 1,  # minutes
+        'help': 'Amount of time in minutes since last activity before channel may be deleted'
     },
     'user_limit': {
         'type': int,
         'value': 0,
+        'help': 'Default user_limit to set for new groups'
     }
 }
+def get_vars_list_for_help():
+    var_lines=['{0:20s} - {help}'.format(var_name, **var) for var_name, var in default_server_vars.items()]
+    return 'Variables:\n'+('\n'.join(var_lines))
+
 logger = logging.getLogger("red.channel_manager")
 logger.setLevel(logging.DEBUG)
 
@@ -226,15 +233,18 @@ class ChannelManager:
         else:
             await self.bot.say('There are no channel groups.')
 
-    @cm.command(name='get', pass_context=True, no_pm=True, help='Get value of server variable')
+
+    @cm.command(name='get', pass_context=True, no_pm=True,
+                help='Get value of server variable\n'+get_vars_list_for_help())
     async def _cm_get(self, ctx, var_name: str):
         if var_name is None:
             await self.bot.say('available variables are: {0!r}'.format(default_server_vars.keys()))
         else:
             value = self.config.get_var(var_name, [ctx.message.server.id])
-            await self.bot.say('{0!r}: {1!r}'.format(var_name, value))
+            await self.bot.say('{0} = {1!r}'.format(var_name, value))
 
-    @cm.command(name='set', pass_context=True, no_pm=True, help='Set value of server variable')
+    @cm.command(name='set', pass_context=True, no_pm=True,
+                help='Set value of server variable\n'+get_vars_list_for_help())
     async def _cm_set(self, ctx, var_name: str, value: str):
         server = ctx.message.server
         try:
@@ -243,8 +253,8 @@ class ChannelManager:
             else:
                 type_fun = default_server_vars[var_name]['type']  # type: Callable[[Any], None]
                 parsed = type_fun(value)
-                self.config.set_var(var_name, [server.id])
-            await self.bot.say('setting {0!r}: {1!r}'.format(var_name, value))
+                self.config.set_var(var_name, parsed, [server.id])
+            await self.bot.say('setting {0} = {1}'.format(var_name, value))
             self.save_config()
         except ValueError as e:
             await self.bot.say(e)
