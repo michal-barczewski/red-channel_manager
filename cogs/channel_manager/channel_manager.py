@@ -5,15 +5,16 @@ import random
 import re
 from datetime import datetime, timedelta
 from operator import itemgetter
-from typing import List, Dict, Union
+from typing import Any, List, Dict, Union, Set, Callable
 
 import discord
+import jsonpickle
 from discord import ChannelType, endpoints
 from discord.channel import Channel
 from discord.ext import commands
 
+from cogs.hierarchical_config import HierarchicalConfig
 from cogs.utils import checks
-from cogs.utils.dataIO import dataIO
 from red import send_cmd_help
 
 default_server_vars = {
@@ -33,44 +34,54 @@ logger.setLevel(logging.DEBUG)
 class ChannelManager:
     def __init__(self, bot):
         logger.info('loading module')
+        self.bot = bot  # type: discord.Client
 
         self.paused = False
-        self.update_period = 10
-        self.bot = bot
-        self.data = None
         self.enabled = True
+
+        self.update_period = 10
+
+        self.config = None  # type: HierarchicalConfig
         self.baseDataPath = "data/channel_manager"
-        self.dataFilePath = os.path.join(self.baseDataPath, "data.json")
-        self.channel_activity = {}
+        self.dataFilePath = os.path.join(self.baseDataPath, "config.json")
+
+        self.channel_activity = {}  # type: Dict[Channel, datetime]
+
+        defaults = {
+            'min_empty_channels': default_server_vars['min_empty_channels']['value'],
+            'channel_timeout': default_server_vars['channel_timeout']['value']
+        }
+
         logger.debug("attempting to load settings from {0}".format(self.dataFilePath))
         if not os.path.exists(self.baseDataPath):
             logger.debug("settings directory at path {0} doesn't exist, creating it")
             os.mkdir(self.baseDataPath)
-        if not os.path.isfile(self.dataFilePath) \
-                or not dataIO.is_valid_json(self.dataFilePath):
+        if not os.path.isfile(self.dataFilePath):
             logger.debug("settings file doesn't exits, creating new file with default settings")
-            self.data = {}
-            self.save_data()
+            self.config = HierarchicalConfig(defaults=defaults)
+            self.save_config()
         else:
-            self.data = dataIO.load_json(self.dataFilePath)
-        logger.debug("loaded settings file with data: {0}".format(self.data))
+            self.config = HierarchicalConfig(defaults=defaults)
+            self.config.load(self.dataFilePath)
 
-    def save_data(self):
-        dataIO.save_json(self.dataFilePath, self.data)
+        logger.debug("loaded settings file with data: {0}".format(self.config))
 
-    @staticmethod
-    def get_channel_name_pattern(group_name):
-        channel_name_pattern = re.compile(r'^' + re.escape(group_name) + r'\s+#(\d+)')
-        return channel_name_pattern
+    def save_config(self):
+        self.config.save(self.dataFilePath)
 
-    def get_channel_number_in_group(self, group_name, channel):
-        pattern = self.get_channel_name_pattern(group_name)
-        match = pattern.match(channel.name)
-        if match:
-            try:
-                return int(match.group(1))
-            except ValueError:
-                return None
+    def get_server_var(self, server: discord.Server, key: str) -> Union[str, int, float]:
+        return self.config.get_var(key, [server.id])
+
+    def set_server_var(self, server, key, value):
+        self.config.set_var(key, value, [server.id])
+        self.save_config()
+
+    def get_group_var(self, server: discord.Server, group_name: str, name: str):
+        return self.config.get_var(name, [server.id, group_name])
+
+    def set_group_var(self, server: discord.Server, group_name: str, name: str, value):
+        self.config.set_var(name, value, [server.id, group_name])
+        self.save_config()
 
     @commands.group(pass_context=True)
     @checks.mod_or_permissions()
@@ -91,27 +102,26 @@ class ChannelManager:
 
     @cm.command()
     async def showdata(self):
-        await self.bot.say(self.data)
+        await self.bot.say(jsonpickle.dumps(self.config))
 
-    @cm.command(pass_context=True)
+    @cm.command(pass_context=True, no_pm=True)
     async def addchan(self, ctx, new_name: str, user_limit):
         server = ctx.message.server
-        if server is not None:
-            msg = "trying to create channel with name {new_name}, on server {server}".format(new_name=new_name,
-                                                                                             server=server)
-            await self.bot.say(msg)
-            new_chan = await self.create_channel(server=server, name=new_name, type=ChannelType.voice, user_limit=6)
-            await self.bot.say("created channel {0}".format(new_chan))
-            # await self.bot.say(all_chans)
-        else:
-            self.bot.say("no server id")
+        msg = "trying to create channel with name {new_name}, on server {server}".format(new_name=new_name,
+                                                                                         server=server)
+        await self.bot.say(msg)
+        new_chan = await self.bot.create_channel(server=server, name=new_name, type=ChannelType.voice)
+        await self.bot.say("created channel {0}".format(new_chan))
 
     @cm.command(pass_context=True)
     async def listchans(self, ctx):
+        message = ['Channel groups: \n```']
         all_chans = ctx.message.server.channels
         voice_chans = [channel for channel in all_chans if channel.type == ChannelType.voice]
         lines = ["{0.name} - {0.position}".format(channel) for channel in voice_chans]
-        await self.bot.say("\n".join(lines))
+        message.append(lines)
+        message.append('```')
+        await self.bot.say("\n".join(message))
 
     @cm.command(pass_context=True)
     async def move(self, ctx, name, position):
@@ -121,53 +131,54 @@ class ChannelManager:
             edited_chan = await self.bot.edit_channel(chan, position=position)
             await self.bot.say("edited chan '{0}'".format(edited_chan))
 
-    @cm.command(pass_context=True)
-    async def addgroup(self, ctx, group_name):
-        channel_groups = self.get_channel_groups(ctx.message.server)
+    @cm.command(name='addgroup', pass_context=True)
+    async def _cm_add_group(self, ctx, group_name):
+        await self.add_group(ctx.message.server, group_name)
 
-        channel_groups[group_name] = True
-        self.save_data()
+    async def add_group(self, server: discord.Server, group_name: str):
+        servers = self.config.get_var('server_ids')  # type: Set[int]
+        if not servers:
+            servers = set()
+        servers.add(server.id)
+        self.config.set_var('server_ids',servers)
+
+        channel_groups = self.config.get_var('channel_groups',[server.id])  # type: Set[str]
+        if channel_groups is None:
+            channel_groups = set()
+        channel_groups.add(group_name)
+        self.config.set_var('channel_groups', channel_groups, [server.id])
+        self.save_config()
 
         logger.debug('added channel group {0!r}'.format(group_name))
         await self.bot.say('added channel group {0!r}'.format(group_name))
 
     @cm.command(name='removegroup', pass_context=True)
-    async def remove_group(self, ctx, group_name, delete):
-        channel_groups = self.get_channel_groups(ctx.message.server)
+    async def _cm_remove_group(self, ctx, group_name, delete=False):
+        await self.remove_group(ctx.message.server, group_name, delete)
+
+    async def remove_group(self, server: discord.Server, group_name: str, delete=False):
+        channel_groups = self.config.get_var('channel_groups', [server.id])  # type: Set[str]
+        if channel_groups is None:
+            channel_groups = set()
+
         if group_name not in channel_groups:
             await self.bot.say('group {0!r} doesn\'t exist'.format(group_name))
         else:
-            del channel_groups[group_name]
-            self.save_data()
+            channel_groups.remove(group_name)
+            self.config.set_var('channel_groups', channel_groups, [server.id])
+            self.save_config()
             await self.bot.say('removing group {0!r}'.format(group_name))
             if delete == 'true':
-                for channel in self.get_channels_for_group(ctx.message.server, group_name):
+                for channel in self.get_channels_for_group(server, group_name):
                     await self.bot.delete_channel(channel=channel)
 
     @cm.command(name='listgroups', pass_context=True)
     async def list_groups(self, ctx):
-        groups_list = [group_name for group_name, _ in self.get_channel_groups(ctx.message.server).items()]
-        groups_list.sort()
-        await self.bot.say('\n'.join(groups_list))
-
-    @staticmethod
-    def create_channel_name(group_name, num):
-        return '{group_name} #{num}'.format(group_name=group_name, num=num)
-
-    async def create_group_channel(self, server, group_name, num):
-        chan_name = self.create_channel_name(group_name, num)
-        logger.info('group {0!r} had no channels, creating new channel with name {1!r}'.format(group_name, chan_name))
-        await self.bot.create_channel(server=server, name=chan_name, type=ChannelType.voice)
-
-    async def update_scheduler(self):
-        while self == self.bot.get_cog('ChannelManager'):
-            if self.enabled and not self.paused:
-                for server_id in self.data.keys():
-                    server = self.bot.get_server(server_id)
-                    logger.debug("attempting to get server with id {0}, result: {1}".format(server_id, server))
-                    if server:
-                        await self.update_groups(server)
-            await asyncio.sleep(self.update_period)
+        channel_groups = self.config.get_var('channel_groups', [ctx.message.server.id])
+        if channel_groups:
+            await self.bot.say('\n'.join(sorted(channel_groups)))
+        else:
+            await self.bot.say('There are no channel groups.')
 
     @cm.command(name='pause', pass_context=True)
     async def pause_loop(self):
@@ -178,13 +189,71 @@ class ChannelManager:
     async def upd(self, ctx):
         await self.update_groups(ctx.message.server)
 
-    async def update_groups(self, server):
-        if not self.enabled:
+    @cm.command(name='get', pass_context=True)
+    async def _cm_get(self, ctx, var_name: str):
+        if var_name is None:
+            await self.bot.say('available variables are: {0!r}'.format(default_server_vars.keys()))
+        else:
+            value = self.config.get_var(var_name, [ctx.message.server.id])
+            await self.bot.say('{0!r}: {1!r}'.format(var_name, value))
+
+    @cm.command(name='set', pass_context=True)
+    async def _cm_set(self, ctx, var_name: str, value: str):
+        server = ctx.message.server
+        try:
+            if value == 'None':
+                self.config.delete_var([server.id], var_name)
+            else:
+                type_fun = default_server_vars[var_name]['type']  # type: Callable[[Any], None]
+                parsed = type_fun(value)
+                self.config.set_var(var_name, [server.id])
+            await self.bot.say('setting {0!r}: {1!r}'.format(var_name, value))
+            self.save_config()
+        except ValueError as e:
+            await self.bot.say(e)
+        except KeyError:
+            await self.bot.say('unknown variable {0!r}'.format(var_name))
+
+    @cm.command(name='movechans', pass_context=True)
+    async def shuffle(self, ctx, method='sort'):
+        logger.info('moving channels')
+        server = ctx.message.server
+        voice_channels = [channel for channel in server.channels if channel.type == ChannelType.voice]
+        result = None
+        if method == 'sort':
+            logger.debug('sorting voice channels')
+            result = sorted(voice_channels, key=lambda chan: chan.name)
+        elif method == 'random':
+            logger.debug('randomizing voice channels: {0!r}'.format(voice_channels))
+            result = list(voice_channels)
+            random.shuffle(result)
+        else:
+            await self.bot.say('Specified method {0!r} is not valid'.format(method))
             return
-        channel_groups = self.get_channel_groups(server)
-        for group_name in channel_groups:
-            await self.update_group(server, group_name)
-        await self.fix_channel_positions(server)
+        # await self.move_chans(voice_channels, result)
+        await self.move_channels(server, channels=result)
+
+    @staticmethod
+    def get_channel_name_pattern(group_name):
+        channel_name_pattern = re.compile(r'^' + re.escape(group_name) + r'\s+#(\d+)')
+        return channel_name_pattern
+
+    @staticmethod
+    def create_channel_name(group_name, num):
+        return '{group_name} #{num}'.format(group_name=group_name, num=num)
+
+    @staticmethod
+    def get_voice_channels(server):
+        return [channel for channel in server.channels if channel.type == ChannelType.voice]
+
+    def get_channel_number_in_group(self, group_name, channel):
+        pattern = self.get_channel_name_pattern(group_name)
+        match = pattern.match(channel.name)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
 
     def get_channels_for_group(self, server, group_name):
         pattern = self.get_channel_name_pattern(group_name)
@@ -193,6 +262,32 @@ class ChannelManager:
                        and pattern.match(channel.name)
                        ]
         return group_chans
+
+    async def create_group_channel(self, server, group_name, num):
+        chan_name = self.create_channel_name(group_name, num)
+        logger.info('group {0!r} had no channels, creating new channel with name {1!r}'.format(group_name, chan_name))
+        await self.bot.create_channel(server=server, name=chan_name, type=ChannelType.voice)
+
+    async def update_scheduler(self):
+        while self == self.bot.get_cog('ChannelManager'):
+            if self.enabled and not self.paused:
+                server_ids = self.config.get_var('server_ids')
+                logger.debug('got server_ids: {0!r}'.format(server_ids))
+                if server_ids is not None:
+                    for server_id in server_ids:
+                        server = self.bot.get_server(server_id)
+                        logger.debug("attempting to get server with id {0}, result: {1}".format(server_id, server))
+                        if server:
+                            await self.update_groups(server)
+            await asyncio.sleep(self.update_period)
+
+    async def update_groups(self, server):
+        if not self.enabled:
+            return
+        channel_groups = self.config.get_var('channel_groups', [server.id])
+        for group_name in channel_groups:
+            await self.update_group(server, group_name)
+        await self.fix_channel_positions(server)
 
     async def update_group(self, server, group_name):
         pattern = self.get_channel_name_pattern(group_name)
@@ -259,14 +354,13 @@ class ChannelManager:
             logger.debug("not removing channel {0.name!r} due to recent activity"
                          .format(channel))
 
-    @staticmethod
-    def get_voice_channels(server):
-        return [channel for channel in server.channels if channel.type == ChannelType.voice]
-
     async def fix_channel_positions(self, server):
         if not self.enabled:
             return
-        channel_groups = self.get_channel_groups(server)
+        channel_groups = self.get_server_var(server, 'channel_groups')  # type: Set[str]
+        if not channel_groups:
+            logger.debug('channel_groups was empty or None: {0!r}'.format(channel_groups))
+            return
         channels = self.get_voice_channels(server)  # type: List[discord.Channel]
         channels.sort(key=lambda ch: ch.position)
         channels_original = list(channels)
@@ -315,61 +409,6 @@ class ChannelManager:
         else:
             logger.debug('no changes in channel order')
 
-    def get_data_for_server_from_context(self, ctx):
-        server = ctx.message.server
-        return self.get_data_for_server(server)
-
-    def get_data_for_server(self, server: discord.Server) -> Dict[str, object]:
-        # TODO: create a class to manage loading/saving data per server,
-        # with fields instead of using dict keys, handle saving sets
-        if server.id not in self.data:
-            self.data[server.id] = {}
-            self.save_data()
-        return self.data[server.id]
-
-    @cm.command(name='get', pass_context=True)
-    async def get_cmd(self, ctx, key: str):
-        if key is None:
-            await self.bot.say('available variables are: {0!r}'.format(default_server_vars.keys()))
-        else:
-            value = self.get_server_var(ctx.message.server, key)
-            await self.bot.say('{0!r}: {1!r}', key, value)
-
-    @cm.command(name='set', pass_context=True)
-    async def set_cmd(self, ctx, key: str, value: str):
-        try:
-            server_data = self.get_data_for_server_from_context(ctx)
-            if value == 'None':
-                del server_data[key]
-            else:
-                parsed = default_server_vars[key]['type'](value)
-                server_data[key] = parsed
-            await self.bot.say('setting {0!r}: {1!r}'.format(key, value))
-            self.save_data()
-        except ValueError as e:
-            await self.bot.say(e)
-        except KeyError:
-            await self.bot.say('unknown variable {0!r}'.format(key))
-
-    @cm.command(name='movechans', pass_context=True)
-    async def shuffle(self, ctx, method='sort'):
-        logger.info('moving channels')
-        server = ctx.message.server
-        voice_channels = [channel for channel in server.channels if channel.type == ChannelType.voice]
-        result = None
-        if method == 'sort':
-            logger.debug('sorting voice channels')
-            result = sorted(voice_channels, key=lambda chan: chan.name)
-        elif method == 'random':
-            logger.debug('randomizing voice channels: {0!r}'.format(voice_channels))
-            result = list(voice_channels)
-            random.shuffle(result)
-        else:
-            await self.bot.say('Specified method {0!r} is not valid'.format(method))
-            return
-        # await self.move_chans(voice_channels, result)
-        await self.move_channels(server, channels=result)
-
     async def move_channels(self, server: discord.Server, channels: List[discord.Channel]):
         payload = [{'id': c.id, 'position': index} for index, c in enumerate(channels)]
         url = '{0}/{1.id}/channels'.format(endpoints.SERVERS, server)
@@ -392,25 +431,7 @@ class ChannelManager:
 
         return self.bot.http.post(url, json=payload, bucket="create_channel")
 
-    def get_server_var(self, server: discord.Server, key: str) -> Union[str, int, float]:
-        server_data = self.get_data_for_server(server)
-        if key in server_data:
-            return server_data[key]
-        if key in default_server_vars:
-            return default_server_vars[key]['value']
-        else:
-            return None
 
-    def set_server_var(self, server, key, value):
-        server_data = self.get_data_for_server(server)
-        server_data[key] = value
-        self.save_data()
-
-    def get_channel_groups(self, server) -> List[Dict]:
-        data = self.get_data_for_server(server)
-        if 'channelGroups' not in data:
-            data['channelGroups'] = {}
-        return data['channelGroups']
 
 
 def find_free_numbers(numbers: List[int], n_to_find: int):
@@ -440,10 +461,6 @@ def setup(bot):
     async def on_channel_create(channel):
         logger.info("on_channel_create, channel: {0}".format(channel))
         await cm.fix_channel_positions(channel.server)
-
-    # async def on_channel_update(before, after):
-    #   pass
-    #   await cm.update_groups(before.server)
 
     async def on_voice_state_update(before, after):
         chan_before = before.voice.voice_channel
