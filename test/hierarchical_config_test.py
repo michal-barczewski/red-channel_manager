@@ -1,4 +1,3 @@
-import json
 import os
 import unittest
 
@@ -64,36 +63,36 @@ class TestSettings(unittest.TestCase):
 
         value = 123
         name = "abc"
-        config.save_var(path, name, value)
+        config.set_var(name, value, path)
 
-        read_value = config.get_var(path, name)
+        read_value = config.get_var(name, path)
         self.assertEquals(123, read_value)
 
-        config.save_var([], "name", "v_root")
-        config.save_var(['lvl_1_a'], "name", "v_1a")
+        config.set_var("name", "v_root", [])
+        config.set_var("name", "v_1a", ['lvl_1_a'])
 
-        default_value = config.get_var(['lvl_1_b'], 'name')
+        default_value = config.get_var('name', ['lvl_1_b'])
         self.assertEquals('v_root', default_value)
 
-        lvl_1_value = config.get_var(['lvl_1_a'], 'name')
+        lvl_1_value = config.get_var('name', ['lvl_1_a'])
         self.assertEquals('v_1a', lvl_1_value)
 
-        lvl_2_value = config.get_var(['lvl_1_a', 'lvl_2_a'], 'name')
+        lvl_2_value = config.get_var('name', ['lvl_1_a', 'lvl_2_a'])
         self.assertEquals('v_1a', lvl_2_value)
 
-        other_lvl_value = config.get_var(['a', 'b', 'c', 'd'], 'name')
+        other_lvl_value = config.get_var('name', ['a', 'b', 'c', 'd'])
         self.assertEquals('v_root', other_lvl_value)
 
-        config.save_var([], 'other_name', 1)
-        other_name_value = config.get_var(['1'], 'other_name')
+        config.set_var('other_name', 1, [])
+        other_name_value = config.get_var('other_name', ['1'])
         self.assertEquals(1, other_name_value)
 
     def testJsonSerialize(self):
         config = HierarchicalConfig()
 
-        config.save_var([], 'var1', 1)
-        config.save_var(['a1', 'b1'], 'var2', 'abc')
-        config.save_var(['a1'], 'var3', [1, 2, 3])
+        config.set_var('var1', 1, [])
+        config.set_var('var2', 'abc', ['a1', 'b1'])
+        config.set_var('var3', [1, 2, 3], ['a1'])
 
         json_str = jsonpickle.encode(config)
 
@@ -103,8 +102,8 @@ class TestSettings(unittest.TestCase):
 
     def testSaveLoad(self):
         config = HierarchicalConfig()
-        config.save_var([], 'var1', 10)
-        config.save_var(['place'], 'athing', [{'abc': 234}])
+        config.set_var('var1', 10, [])
+        config.set_var('athing', [{'abc': 234}], ['place'])
         path = './data/'
         if not os.path.exists(path):
             os.mkdir(path)
