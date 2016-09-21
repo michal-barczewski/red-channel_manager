@@ -5,7 +5,7 @@ import random
 import re
 from datetime import datetime, timedelta
 from operator import itemgetter
-from typing import Any, List, Dict, Union, Set, Callable
+from typing import Any, List, Dict, Union, Set, Callable, Iterable
 
 import discord
 import jsonpickle
@@ -115,11 +115,11 @@ class ChannelManager:
 
     @cm.command(pass_context=True)
     async def listchans(self, ctx):
-        message = ['Channel groups: \n```']
+        message = ['```','Channels: \n']
         all_chans = ctx.message.server.channels
         voice_chans = [channel for channel in all_chans if channel.type == ChannelType.voice]
         lines = ["{0.name} - {0.position}".format(channel) for channel in voice_chans]
-        message.append(lines)
+        message.extend(lines)
         message.append('```')
         await self.bot.say("\n".join(message))
 
@@ -153,7 +153,7 @@ class ChannelManager:
         await self.bot.say('added channel group {0!r}'.format(group_name))
 
     @cm.command(name='removegroup', pass_context=True)
-    async def _cm_remove_group(self, ctx, group_name, delete=False):
+    async def _cm_remove_group(self, ctx, group_name, delete=True):
         await self.remove_group(ctx.message.server, group_name, delete)
 
     async def remove_group(self, server: discord.Server, group_name: str, delete=False):
@@ -168,7 +168,8 @@ class ChannelManager:
             self.config.set_var('channel_groups', channel_groups, [server.id])
             self.save_config()
             await self.bot.say('removing group {0!r}'.format(group_name))
-            if delete == 'true':
+            logger.debug('delete is: {0!r}'.format(delete))
+            if delete:
                 for channel in self.get_channels_for_group(server, group_name):
                     await self.bot.delete_channel(channel=channel)
 
@@ -176,7 +177,8 @@ class ChannelManager:
     async def list_groups(self, ctx):
         channel_groups = self.config.get_var('channel_groups', [ctx.message.server.id])
         if channel_groups:
-            await self.bot.say('\n'.join(sorted(channel_groups)))
+            message = create_message_from_list(prefix='Channel groups:\n', line_format='{0}', list=sorted(channel_groups))
+            await self.bot.say(message)
         else:
             await self.bot.say('There are no channel groups.')
 
@@ -432,7 +434,12 @@ class ChannelManager:
         return self.bot.http.post(url, json=payload, bucket="create_channel")
 
 
-
+def create_message_from_list(prefix: str, line_format: str, list: Iterable[Any]):
+    message_lines = ['```',prefix]
+    lines = [line_format.format(line_args) for line_args in list]
+    message_lines.extend(lines)
+    message_lines.append('```')
+    return "\n".join(message_lines)
 
 def find_free_numbers(numbers: List[int], n_to_find: int):
     free_numbers = []
