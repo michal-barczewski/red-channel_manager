@@ -1,7 +1,10 @@
 import logging
 from typing import Dict, Iterable, List, Set, Union, NewType
 
-import jsonpickle
+try:
+    import jsonpickle
+except ImportError:
+    jsonpickle = None
 
 BaseValueType = NewType('BaseValueType', Union[str, int, float])
 ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType], Set[BaseValueType], Dict[str, BaseValueType]])
