@@ -4,11 +4,11 @@ import os
 from collections import defaultdict, ChainMap
 from typing import Dict, Iterable, List, Set, Union, NewType
 
-BaseValueType = NewType('BaseValueType', Union[str, int, float])
-ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType], Dict[str, BaseValueType]])
-
 logger = logging.getLogger("red.hierarchical_config")
 logger.setLevel(logging.DEBUG)
+
+BaseValueType = NewType('BaseValueType', Union[str, int, float])
+ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType], Dict[str, BaseValueType]])
 
 
 class Config:
