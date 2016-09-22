@@ -17,8 +17,6 @@ from cogs.config import Config
 from cogs.utils import checks
 from cogs.utils.dataIO import dataIO, CorruptedJSON
 
-from red import send_cmd_help
-
 logger = logging.getLogger("red.channel_manager")
 logger.setLevel(logging.DEBUG)
 
@@ -107,13 +105,22 @@ class ChannelManager:
         self.config.set_var(name, value, [server.id, group_name])
         self.save_config()
 
-    @commands.group(pass_context=True,
-                    help='Automatic channel creation')
+    async def send_cmd_help(self, ctx):
+        if ctx.invoked_subcommand:
+            pages = self.bot.formatter.format_help_for(ctx, ctx.invoked_subcommand)
+            for page in pages:
+                await self.bot.send_message(ctx.message.channel, page)
+        else:
+            pages = self.bot.formatter.format_help_for(ctx, ctx.command)
+            for page in pages:
+                await self.bot.send_message(ctx.message.channel, page)
+
+    @commands.group(pass_context=True)
     @checks.mod_or_permissions()
     async def cm(self, ctx):
-        logger.debug('ctx: {0!r}'.format(ctx))
+        """Automatic channel creation"""
         if ctx.invoked_subcommand is None:
-            await send_cmd_help(ctx)
+            await self.send_cmd_help(ctx)
 
     @cm.command(help='Enables channel management')
     async def enable(self):
@@ -133,8 +140,7 @@ class ChannelManager:
     @cm.group(pass_context=True, help='Debug functions, not for normal usage')
     async def debug(self, ctx):
         if ctx.invoked_subcommand is None:
-            await send_cmd_help(ctx)
-            return
+            await self.send_cmd_help(ctx)
 
     @debug.command(help='Prints current configuration')
     async def showdata(self):
@@ -222,7 +228,7 @@ class ChannelManager:
         await self.bot.say('added channel group {0!r}'.format(group_name))
 
     @cm.command(name='removegroup', pass_context=True, no_pm=True,
-                help='Remove channel group, deletes channels from that group unless delete=False is set')
+                help='Remove channel group, deletes channels from that group unless delete is False')
     async def _cm_remove_group(self, ctx, group_name, delete=True):
         await self.remove_group(ctx.message.server, group_name, delete)
 
