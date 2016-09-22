@@ -5,7 +5,7 @@ from collections import defaultdict, ChainMap
 from typing import Dict, Iterable, List, Set, Union, NewType
 
 BaseValueType = NewType('BaseValueType', Union[str, int, float])
-ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType], Set[BaseValueType], Dict[str, BaseValueType]])
+ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType], Dict[str, BaseValueType]])
 
 logger = logging.getLogger("red.hierarchical_config")
 logger.setLevel(logging.DEBUG)
@@ -13,8 +13,9 @@ logger.setLevel(logging.DEBUG)
 
 class Config:
     def __init__(self, defaults: Dict[str, ValueType] = None, data: Dict[str,Dict[str,BaseValueType]] = None):
-        data = data if data is not None else {}
-        self.data = defaultdict(data)
+        self.data = defaultdict(dict)
+        if data is not None:
+            self.data.update(data)
         self.defaults = defaults if defaults is not None else {}  # type: Dict[str, ValueType]
 
     def __eq__(self, other):
@@ -26,7 +27,7 @@ class Config:
             return self.data == self.data
 
     def __str__(self):
-        return self.__dict__
+        return str(self.__dict__)
 
     def get_location(self, path: List[str]):
         if path is None or len(path) == 0:
@@ -39,11 +40,11 @@ class Config:
         return location
 
     def set_var(self, name: str, value: ValueType, path: List[str] = None):
-        if isinstance(value, (str, int, float, List, Set, Dict)):
+        if isinstance(value, (str, int, float, List, Dict)):
             location = self.get_location(path)
             location[name] = value
         else:
-            raise TypeError('value should be one of following types: str, int, float, List, Set, Dict')
+            raise TypeError('value should be one of following types: str, int, float, List, Dict')
 
     def delete_var(self, path: List[str], name: str):
         location = self.get_location(path)
@@ -63,7 +64,7 @@ class Config:
         """
 
         location = self.get_location(path)
-        value = location[name]
+        value = location.get(name)
         logger.debug('retrieved variable {0!r}: value {1!r}, type {2!r}'.format(name, value, type(value)))
         if isinstance(value, (str, int, float)) or value is None:
             return value

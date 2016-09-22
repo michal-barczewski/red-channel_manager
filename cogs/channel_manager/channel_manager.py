@@ -4,6 +4,7 @@ import os
 import random
 import re
 from datetime import datetime, timedelta
+from json import JSONDecodeError
 from operator import itemgetter
 from typing import Any, List, Dict, Union, Set, Callable, Iterable, NewType
 
@@ -12,13 +13,11 @@ from discord import ChannelType, endpoints
 from discord.channel import Channel
 from discord.ext import commands
 
+from cogs.config import Config
 from cogs.utils import checks
-from red import send_cmd_help
+from cogs.utils.dataIO import dataIO, CorruptedJSON
 
-try:
-    import jsonpickle
-except ImportError:
-    jsonpickle = None
+from red import send_cmd_help
 
 logger = logging.getLogger("red.channel_manager")
 logger.setLevel(logging.DEBUG)
@@ -26,107 +25,6 @@ logger.setLevel(logging.DEBUG)
 BaseValueType = NewType('BaseValueType', Union[str, int, float])
 ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType],
                                        Set[BaseValueType], Dict[str, BaseValueType]])
-
-
-class Location:
-    def __init__(self, locations: Dict = None, values: Dict[str, ValueType] = None) -> object:
-        self.locations = locations if locations else {}  # type: Dict[str, Location]
-        self.values = values if values else {}  # type: Dict[str, ValueType]
-
-    def __eq__(self, other):
-        if not isinstance(other, Location):
-            return False
-        elif self.locations != other.locations:
-            return False
-        else:
-            return self.values == other.values
-
-
-class HierarchicalConfig:
-    def __init__(self, defaults: Dict[str, ValueType] = None, data: Location = None):
-        self.data = data if data else Location()  # type: Location
-        self.defaults = defaults if defaults else {}  # type: Dict[str, ValueType]
-
-    def __eq__(self, other):
-        if not isinstance(other, HierarchicalConfig):
-            return False
-        elif self.defaults != other.defaults:
-            return False
-        else:
-            return self.data == self.data
-
-    def ensure_path(self, path: List[str]) -> Location:
-        if path is None or len(path) == 0:
-            return self.data
-        location = self.data  # type: Location
-        for key in path:
-            if key not in location.locations:
-                location.locations[key] = Location()
-            location = location.locations[key]
-        return location
-
-    def get_location(self, path: List[str]):
-        location = self.data
-        for key in path:
-            if key in location.locations:
-                location = location.locations[key]
-        return location
-
-    def set_var(self, name: str, value: ValueType, path: List[str] = None):
-        if isinstance(value, (str, int, float, List, Set, Dict)):
-            location = self.ensure_path(path)
-            location.values[name] = value
-        else:
-            raise TypeError('value should be one of following types: str, int, float, List, Set, Dict')
-
-    def delete_var(self, path: List[str], name: str):
-        location = self.get_location(path)
-        if name in location.values[name]:
-            del location.values[name]
-
-    def get_var(self, name: str, path: Iterable[str] = None) -> ValueType:
-        """Retrieve variable value from specified path
-
-        If value doesn't exist at specified path, it is looked up recursively at lower levels,
-        stopping at the default value
-
-        If variable is of mutable type then a copy of it will be returned, to modify it use set_var with copy as value
-
-        :param name: name of the variable to retrieve
-        :param path: path of the variable
-        :return: value of the variable
-        """
-
-        value = self.data.values.get(name, self.defaults.get(name))
-        location = self.data
-        if not path:
-            return value
-        for key in path:
-            # get value from current location, preserve existing one if it doesn't exist here
-            if key in location.locations:
-                location = location.locations[key]
-                value = location.values.get(name, value)
-            else:
-                break
-        logger.debug('retrieved variable {0!r}: value {1!r}, type {2!r}'.format(name, value, type(value)))
-        if isinstance(value, (str, int, float)) or value is None:
-            return value
-        elif isinstance(value, (List, Set, Dict)):
-            return value.copy()
-        else:
-            raise TypeError('tried to retrieve value of unsupported type (this should not be possible)')
-
-    def save(self, file_name: str):
-        with open(file_name, 'w+') as config_file:
-            jsonpickle.set_preferred_backend('simplejson')
-            jsonpickle.set_encoder_options('simplejson', sort_keys=True, indent=4)
-            json_str = jsonpickle.encode(self.data)
-            config_file.write(json_str)
-
-    def load(self, file_name: str):
-        with open(file_name, 'r') as config_file:
-            json_str = config_file.read()
-            self.data = jsonpickle.decode(json_str)
 
 
 default_server_vars = {
@@ -164,7 +62,7 @@ class ChannelManager:
 
         self.update_period = 10
 
-        self.config = None  # type: HierarchicalConfig
+        self.config = None  # type: Config
         self.baseDataPath = "data/channel_manager"
         self.dataFilePath = os.path.join(self.baseDataPath, "config.json")
 
@@ -181,11 +79,14 @@ class ChannelManager:
             os.mkdir(self.baseDataPath)
         if not os.path.isfile(self.dataFilePath):
             logger.debug("settings file doesn't exits, creating new file with default settings")
-            self.config = HierarchicalConfig(defaults=defaults)
+            self.config = Config(defaults=defaults)
             self.save_config()
         else:
-            self.config = HierarchicalConfig(defaults=defaults)
-            self.config.load(self.dataFilePath)
+            try:
+                data = dataIO.load_json(self.dataFilePath)
+            except CorruptedJSON:
+                data = {}
+            self.config = Config(data=data, defaults=defaults)
 
         logger.debug("loaded settings file with data: {0}".format(self.config))
 
@@ -210,9 +111,9 @@ class ChannelManager:
                     help='Automatic channel creation')
     @checks.mod_or_permissions()
     async def cm(self, ctx):
+        logger.debug('ctx: {0!r}'.format(ctx))
         if ctx.invoked_subcommand is None:
             await send_cmd_help(ctx)
-            return
 
     @cm.command(help='Enables channel management')
     async def enable(self):
@@ -237,7 +138,7 @@ class ChannelManager:
 
     @debug.command(help='Prints current configuration')
     async def showdata(self):
-        await self.bot.say(jsonpickle.dumps(self.config))
+        await self.bot.say(self.config)
 
     @debug.command(pass_context=True, no_pm=True)
     async def addchan(self, ctx, new_name: str, user_limit):
@@ -298,16 +199,22 @@ class ChannelManager:
         await self.add_group(ctx.message.server, group_name)
 
     async def add_group(self, server: discord.Server, group_name: str):
-        servers = self.config.get_var('server_ids')  # type: Set[int]
-        if not servers:
-            servers = set()
-        servers.add(server.id)
-        self.config.set_var('server_ids', servers)
+        server_ids = self.config.get_var('server_ids')  # type: List[int]
+        if not server_ids:
+            server_ids = []
+        if server.id not in server_ids:
+            server_ids.append(server.id)
+            self.config.set_var('server_name', server.name,[server.id])  # just for reference in config file
+        self.config.set_var('server_ids', server_ids)
 
-        channel_groups = self.config.get_var('channel_groups', [server.id])  # type: Set[str]
+        channel_groups = self.config.get_var('channel_groups', [server.id])  # type: List[str]
         if channel_groups is None:
-            channel_groups = set()
-        channel_groups.add(group_name)
+            channel_groups = []
+        if group_name not in channel_groups:
+            channel_groups.append(group_name)
+        else:
+            await self.bot.say('group {0!r} already exists'.format(group_name))
+            return
         self.config.set_var('channel_groups', channel_groups, [server.id])
         self.save_config()
 
@@ -320,9 +227,9 @@ class ChannelManager:
         await self.remove_group(ctx.message.server, group_name, delete)
 
     async def remove_group(self, server: discord.Server, group_name: str, delete=False):
-        channel_groups = self.config.get_var('channel_groups', [server.id])  # type: Set[str]
+        channel_groups = self.config.get_var('channel_groups', [server.id])  # type: List[str]
         if channel_groups is None:
-            channel_groups = set()
+            channel_groups = []
 
         if group_name not in channel_groups:
             await self.bot.say('group {0!r} doesn\'t exist'.format(group_name))
@@ -341,7 +248,7 @@ class ChannelManager:
         channel_groups = self.config.get_var('channel_groups', [ctx.message.server.id])
         if channel_groups:
             message = create_message_from_list(prefix='Channel groups:\n', line_format='{0}',
-                                               list=sorted(channel_groups))
+                                               message_list=sorted(channel_groups))
             await self.bot.say(message)
         else:
             await self.bot.say('There are no channel groups.')
@@ -354,6 +261,13 @@ class ChannelManager:
         else:
             value = self.config.get_var(var_name, [ctx.message.server.id])
             await self.bot.say('{0} = {1!r}'.format(var_name, value))
+
+    @cm.command(name='getall', pass_context=True)
+    async def _cm_get_all(self, ctx):
+        list=((var_name, self.get_server_var(ctx.message.server,var_name)) for var_name in default_server_vars.keys())
+        logger.debug('list: {0}'.format(list))
+        message = create_message_from_list('Server variables:', '{0[0]:20s} = {0[1]!r}',list)
+        await self.bot.say(message)
 
     @cm.command(name='set', pass_context=True, no_pm=True,
                 help='Set value of server variable\n' + get_vars_list_for_help())
@@ -621,10 +535,6 @@ def install_dep(dep_name):
 
 
 def setup(bot):
-    if jsonpickle is None:
-        raise RuntimeError("Required dependency 'jsonpickle' missing.\n"
-                           "You need to run 'pip3 install jsonpickle'")
-
     cm = ChannelManager(bot)
     bot.add_cog(cm)
     bot.loop.create_task(cm.update_scheduler())
