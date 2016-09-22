@@ -18,7 +18,7 @@ from cogs.utils import checks
 from cogs.utils.dataIO import dataIO, CorruptedJSON
 
 logger = logging.getLogger("red.channel_manager")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)
 
 BaseValueType = NewType('BaseValueType', Union[str, int, float])
 ValueType = NewType('ValueType', Union[BaseValueType, List[BaseValueType], Dict[str, BaseValueType]])
@@ -157,6 +157,9 @@ class ChannelManager:
                 data = {}
             self.config = Config(data=data, defaults=defaults)
 
+        log_level = self.config.get_var('log_level')
+        if log_level is not None:
+            logger.setLevel(logging.getLevelName(log_level.upper()))
         logger.debug("loaded settings file with data: {0}".format(self.config))
 
     def save_config(self):
@@ -216,13 +219,15 @@ class ChannelManager:
     @debug.command(pass_context=True)
     @checks.is_owner()
     async def set_level(self, ctx, level: str):
-        """Sets debug level to specified level. Level can be:
+        """Sets log level to specified level. Level can be:
         'debug', 'info', 'warning', 'error', 'critical'
         """
         levels = {'debug', 'info', 'warning', 'error', 'critical'}
         if level.lower() in levels:
             logger.setLevel(logging.getLevelName(level.upper()))
-            await self.bot.say('setting debug level to: {0}'.format(level))
+            self.config.set_var('log_level',level)
+            self.save_config()
+            await self.bot.say('setting log level to: {0}'.format(level))
         else:
             self.send_cmd_help(ctx)
 
