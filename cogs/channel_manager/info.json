@@ -3,5 +3,5 @@
     "INSTALL_MSG" : "Channel manager installed",
     "NAME" : "channel_manager",
     "SHORT" : "Automatic channel creation and management",
-    "DESCRIPTION" : "Allows for adding groups of channels that will be automatically managed, creates and deletes channels maintain specified number of empty channels"
+    "DESCRIPTION" : "Allows for adding groups of channels that will be automatically managed, creates and deletes channels to maintain specified number of empty channels"
 }
