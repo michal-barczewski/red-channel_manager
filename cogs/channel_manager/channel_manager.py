@@ -15,7 +15,7 @@ from discord.channel import Channel
 from discord.ext import commands
 
 from cogs.utils import checks
-from cogs.utils.dataIO import dataIO, CorruptedJSON
+from cogs.utils.dataIO import dataIO
 
 logger = logging.getLogger("red.channel_manager")
 logger.setLevel(logging.WARNING)
@@ -153,7 +153,7 @@ class ChannelManager:
         else:
             try:
                 data = dataIO.load_json(self.dataFilePath)
-            except CorruptedJSON:
+            except json.JSONDecodeError:
                 data = {}
             self.config = Config(data=data, defaults=defaults)
 
