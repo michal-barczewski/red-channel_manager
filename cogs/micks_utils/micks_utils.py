@@ -30,7 +30,7 @@ class MicksUtils:
 
 def get_role_by_name(roles: Iterable[Role], rolename):
     for role in roles:
-        if role.name.lower() == rolename:
+        if role.name.lower() == rolename.lower():
             return role
 
 def get_users_for_role(users: Iterable[User], rolename: str):
