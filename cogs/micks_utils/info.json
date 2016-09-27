@@ -1,7 +1,7 @@
 {
     "AUTHOR" : "Michał Barczewski",
-    "INSTALL_MSG" : "",
+    "INSTALL_MSG" : "module installed",
     "NAME" : "micks_utils",
     "SHORT" : "place to stuff random commands",
-    "DESCRIPTION" : ""
+    "DESCRIPTION" : "blah"
 }
