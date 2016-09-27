@@ -30,10 +30,12 @@ class MicksUtils:
             await self.bot.say(create_message_from_list('Users for role {role}:\n'.format(role=rolename),
                                                         '- {0.name}', users))
 
-def get_role_by_name(roles: Iterable[Role], rolename):
+
+def get_role_by_name(roles: Iterable[Role], rolename: str):
     for role in roles:
         if role.name.lower() == rolename.lower():
             return role
+
 
 def get_users_for_role(users: Iterable[User], rolename: str):
     users_with_role = []
@@ -42,12 +44,14 @@ def get_users_for_role(users: Iterable[User], rolename: str):
             users_with_role.append(user)
     return users_with_role
 
+
 def create_message_from_list(prefix: str, line_format: str, message_list: Iterable[Any]):
     message_lines = ['```', prefix]
     lines = [line_format.format(line_args) for line_args in message_list]
     message_lines.extend(lines)
     message_lines.append('```')
     return "\n".join(message_lines)
+
 
 def setup(bot: Bot):
     s = MicksUtils(bot)
