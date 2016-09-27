@@ -13,7 +13,7 @@ class MicksUtils:
         self.bot = bot
 
     @command(name='listrole', pass_context=True)
-    @checks.mod_or_permissions()
+    @checks.mod_or_permissions(administrator=True, moderator=True)
     async def _list_role(self, ctx, rolename: str):
         """List all members for a given role"""
         server = ctx.message.server  # type: Server
