@@ -20,9 +20,10 @@ class MicksUtils:
         #role = discord.utils.get(server.roles, name=rolename.lower())  # type: Role
         role = get_role_by_name(server.roles, rolename) # cause we want to be case insensitive
         if role is None:
+            roles = sorted(server.roles, key=lambda role: role.name.lower())
             await self.bot.say(create_message_from_list('Couldn\'t find role {role}, available roles are:\n'
                                                         .format(role=rolename),
-                                                        '- {0.name}', server.roles))
+                                                        '- {0.name}', roles))
         else:
             users = sorted(get_users_for_role(server.members, role.name),
                            key=lambda user: user.name.lower())
