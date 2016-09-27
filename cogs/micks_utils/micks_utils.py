@@ -24,7 +24,8 @@ class MicksUtils:
                                                         .format(role=rolename),
                                                         '- {0.name}', server.roles))
         else:
-            users = get_users_for_role(server.members, role.name)
+            users = sorted(get_users_for_role(server.members, role.name),
+                           key=lambda user: user.name)
             await self.bot.say(create_message_from_list('Users for role {role}:\n'.format(role=rolename),
                                                         '- {0.name}', users))
 
