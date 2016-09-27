@@ -1,9 +1,11 @@
 from typing import Iterable, Any
 
 from discord import Server, User
-from discord.role import Role
 from discord.ext.commands import Bot
 from discord.ext.commands.core import command
+from discord.role import Role
+
+from cogs.utils import checks
 
 
 class MicksUtils:
@@ -11,6 +13,7 @@ class MicksUtils:
         self.bot = bot
 
     @command(name='listrole', pass_context=True)
+    @checks.mod_or_permissions()
     async def _list_role(self, ctx, rolename: str):
         """List all members for a given role"""
         server = ctx.message.server  # type: Server
