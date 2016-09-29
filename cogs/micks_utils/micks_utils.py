@@ -14,7 +14,7 @@ class MicksUtils:
 
     @command(name='listrole', pass_context=True)
     @checks.mod_or_permissions(administrator=True, moderator=True)
-    async def _list_role(self, ctx, rolename: str):
+    async def _list_role(self, ctx, *, rolename: str):
         """List all members for a given role"""
         server = ctx.message.server  # type: Server
         #role = discord.utils.get(server.roles, name=rolename.lower())  # type: Role
@@ -27,13 +27,17 @@ class MicksUtils:
         else:
             users = sorted(get_users_for_role(server.members, role.name),
                            key=lambda user: user.name.lower())
-            await self.bot.say(create_message_from_list('Users for role {role}:\n'.format(role=rolename),
+            await self.bot.say(create_message_from_list('Users for role {role.name!r}:\n'.format(role=role),
                                                         '- {0.name}', users))
 
+def process_input(input: str):
+    input_stripped = input.lower().strip()
+    input_split = input_stripped.split()
+    return ' '.join(input_split)
 
 def get_role_by_name(roles: Iterable[Role], rolename: str):
     for role in roles:
-        if role.name.lower() == rolename.lower():
+        if process_input(role.name) == process_input(rolename):
             return role
 
 
