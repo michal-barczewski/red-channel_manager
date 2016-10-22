@@ -10,9 +10,10 @@ from operator import itemgetter
 from typing import Any, List, Dict, Union, Set, Callable, Iterable, NewType
 
 import discord
-from discord import ChannelType, endpoints
+from discord import ChannelType
 from discord.channel import Channel
 from discord.ext import commands
+from discord.http import HTTPClient
 
 from cogs.utils import checks
 from cogs.utils.dataIO import dataIO
@@ -568,7 +569,7 @@ class ChannelManager:
 
     async def move_channels(self, server: discord.Server, channels: List[discord.Channel]):
         payload = [{'id': c.id, 'position': index} for index, c in enumerate(channels)]
-        url = '{0}/{1.id}/channels'.format(endpoints.SERVERS, server)
+        url = '{0}/{1.id}/channels'.format(HTTPClient.GUILDS, server)
         logger.debug('using url: {0}'.format(url))
         logger.debug('using payload: {0!r}'.format(payload))
         await self.bot.http.patch(url, json=payload, bucket="move_channel")
@@ -576,7 +577,7 @@ class ChannelManager:
     async def create_channel(self, server: discord.Server, name: str, type: ChannelType, user_limit: int,
                              permission_overwrites=None):
         # doesn't work atm, reason unknown
-        url = discord.http.HTTPClient.GUILDS + '/{0}/channels'.format(server.id)
+        url = HTTPClient.GUILDS + '/{0}/channels'.format(server.id)
         payload = {
             'name': name,
             'type': str(type),
