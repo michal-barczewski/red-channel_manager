@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+from asyncio.queues import Queue
 from collections import defaultdict, ChainMap
 from datetime import datetime, timedelta
 from operator import itemgetter
@@ -65,7 +66,7 @@ class Config:
         if name in location[name]:
             del location[name]
 
-    def get_var(self, name: str, path: Iterable[str] = None) -> ValueType:
+    def get_var(self, name: str, path: Iterable[str] = None, default = None) -> ValueType:
         """Retrieve variable value from specified path
 
         If value doesn't exist at specified path, value is looked up at lower levels,
@@ -81,7 +82,10 @@ class Config:
         value = location.get(name)
         logger.debug('retrieved variable {0!r}: value {1!r}, type {2!r}'.format(name, value, type(value)))
         if isinstance(value, (str, int, float)) or value is None:
-            return value
+            if value is None and default is not None:
+                return default
+            else:
+                return value
         elif isinstance(value,(List,Set,Dict)):
             return value.copy()
         else:
@@ -96,6 +100,30 @@ class Config:
             json_str = config_file.read()
             self.data = json.loads(json_str)
 
+
+class ChannelHandler(logging.Handler):
+    def __init__(self, bot: discord.Client, cog, cog_name: str, channel: discord.Channel, *args, **kwargs):
+        self.cog = cog
+        self.cog_name = cog_name
+        self.queue = Queue()
+        self.channel = channel
+        self.bot = bot
+        super(ChannelHandler, self).__init__(*args, **kwargs)
+
+    def emit(self, record):
+        if self.channel:
+            self.queue.put_nowait(record)
+
+    async def update_task(self):
+        while self.cog == self.bot.get_cog(self.cog_name):
+            if not self.channel:
+                await asyncio.sleep(1)
+            else:
+                record = await self.queue.get()
+                if self.cog != self.bot.get_cog(self.cog_name):
+                    return
+                msg = self.format(record)
+                await self.bot.send_message(content=msg, destination=self.channel)
 
 default_server_vars = {
     'min_empty_channels': {
@@ -163,6 +191,22 @@ class ChannelManager:
             logger.setLevel(logging.getLevelName(log_level.upper()))
         logger.debug("loaded settings file with data: {0}".format(self.config))
 
+        log_channel_id = self.config.get_var('log_channel_id')
+        log_channel = self.bot.get_channel(log_channel_id)
+        self.channel_handler = ChannelHandler(self.bot, self, 'ChannelManager', log_channel)
+        red_format = logging.Formatter(
+            '%(asctime)s %(levelname)s %(module)s %(funcName)s %(lineno)d: '
+            '%(message)s',
+            datefmt="[%d/%m/%Y %H:%M]")
+        channel_log_level = self.config.get_var('channel_log_level', default=logging.INFO)
+        self.channel_handler.setLevel(channel_log_level)
+
+        self.channel_handler.setFormatter(red_format)
+        logger.addHandler(self.channel_handler)
+        self.bot.loop.create_task(self.channel_handler.update_task())
+
+
+
     def save_config(self):
         self.config.save(self.dataFilePath)
 
@@ -217,20 +261,51 @@ class ChannelManager:
         if ctx.invoked_subcommand is None:
             await self.send_cmd_help(ctx)
 
+    @staticmethod
+    def parse_log_level(level: str):
+        levels = {'debug', 'info', 'warn', 'error', 'critical'}
+        if level.lower() in levels:
+            return logging.getLevelName(level.upper())
+
     @debug.command(pass_context=True)
     @checks.is_owner()
-    async def set_level(self, ctx, level: str):
+    async def set_level(self, ctx, level_name: str):
         """Sets log level to specified level. Level can be:
         'debug', 'info', 'warning', 'error', 'critical'
         """
-        levels = {'debug', 'info', 'warning', 'error', 'critical'}
-        if level.lower() in levels:
-            logger.setLevel(logging.getLevelName(level.upper()))
+        level = ChannelManager.parse_log_level(level_name)
+        if level:
+            logger.setLevel(level)
             self.config.set_var('log_level',level)
             self.save_config()
-            await self.bot.say('setting log level to: {0}'.format(level))
+            await self.bot.say('setting log level to: {0}'.format(logging.getLevelName(level)))
         else:
-            self.send_cmd_help(ctx)
+            await self.send_cmd_help(ctx)
+
+    @debug.command(pass_context=True)
+    @checks.is_owner()
+    async def set_channel_level(self, ctx, level_name: str):
+        """Sets log level for log channel to specified level. Level can be:
+        'debug', 'info', 'warning', 'error', 'critical'
+        """
+        level = ChannelManager.parse_log_level(level_name)
+        if level:
+            self.channel_handler.setLevel(level)
+            self.config.set_var('channel_log_level',level)
+            self.save_config()
+            await self.bot.say('setting channel log level to: {0}'.format(logging.getLevelName(level)))
+        else:
+            await self.send_cmd_help(ctx)
+
+    @debug.command(pass_context=True)
+    @checks.is_owner()
+    async def set_log_channel(self, ctx, channel: discord.Channel):
+        """Sets channel to send log messages to specified channel"""
+        logger.debug('setting debug channel to: {0}'.format(channel, type(channel)))
+        self.channel_handler.channel = channel
+        self.config.set_var('log_channel_id', channel.id)
+        self.save_config()
+        await self.bot.say('setting debug channel to: {0}'.format(channel.name))
 
     @debug.command(help='Prints current configuration')
     async def showdata(self):
@@ -291,7 +366,7 @@ class ChannelManager:
         await self.move_channels(server, channels=result)
 
     @cm.command(name='addgroup', no_pm=True, pass_context=True, help='Add channel group to manage')
-    async def _cm_add_group(self, ctx, group_name):
+    async def _cm_add_group(self, ctx, *, group_name):
         await self.add_group(ctx.message.server, group_name)
 
     async def add_group(self, server: discord.Server, group_name: str):
@@ -314,15 +389,17 @@ class ChannelManager:
         self.config.set_var('channel_groups', channel_groups, [server.id])
         self.save_config()
 
+        self.bot.loop.create_task(self.update_groups(server))
+
         logger.debug('added channel group {0!r}'.format(group_name))
         await self.bot.say('added channel group {0!r}'.format(group_name))
 
     @cm.command(name='removegroup', pass_context=True, no_pm=True,
-                help='Remove channel group, deletes channels from that group unless delete is False')
-    async def _cm_remove_group(self, ctx, group_name, delete=True):
-        await self.remove_group(ctx.message.server, group_name, delete)
+                help='Remove channel group, deletes channels from that group')
+    async def _cm_remove_group(self, ctx, *, group_name):
+        await self.remove_group(ctx.message.server, group_name, delete = True)
 
-    async def remove_group(self, server: discord.Server, group_name: str, delete=False):
+    async def remove_group(self, server: discord.Server, group_name: str, delete = True):
         channel_groups = self.config.get_var('channel_groups', [server.id])  # type: List[str]
         if channel_groups is None:
             channel_groups = []
@@ -506,10 +583,10 @@ class ChannelManager:
             await self.bot.delete_channel(channel=channel)
 
         if not self.channel_is_active(server, channel):
-            logger.debug("removing channel {0.name}".format(channel))
+            logger.info("removing channel {0.name}".format(channel))
             await self.bot.delete_channel(channel=channel)
         else:
-            logger.debug("not removing channel {0.name!r} due to recent activity"
+            logger.info("not removing channel {0.name!r} due to recent activity"
                          .format(channel))
 
     async def fix_channel_positions(self, server):
@@ -646,9 +723,8 @@ def setup(bot):
             cm.channel_activity[chan_before] = datetime.now()
         if chan_after:
             cm.channel_activity[chan_after] = datetime.now()
-        logger.info(cm.channel_activity)
         await cm.update_groups(before.server)
-        logger.info('on_voice_state_update, channel {chan_after},{chan_before}, before: {0}, after: {1}'
+        logger.debug('on_voice_state_update, channel_before: {chan_before}, channel_after: {chan_after}, before: {0}, after: {1}'
                     .format(before, after, chan_before=chan_before, chan_after=chan_after))
 
     bot.add_listener(on_channel_create, 'on_channel_create')

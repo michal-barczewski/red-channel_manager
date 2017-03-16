@@ -2,38 +2,22 @@ import argparse
 import unittest
 
 from cogs.channel_manager import find_free_numbers
-from cogs.hierarchical_config import HierarchicalConfig, Variable
 
 
 class TestUtils(unittest.TestCase):
 
     def test_find_free_numbers(self):
         no_free_numbers = [1, 2, 3, 4]
-        self.assertEquals(find_free_numbers(no_free_numbers, 0), [])
-        self.assertEquals(find_free_numbers(no_free_numbers, 1), [5])
-        self.assertEquals(find_free_numbers(no_free_numbers, 2), [5, 6])
+
+        self.assertEquals([], find_free_numbers(no_free_numbers, 0))
+        self.assertEquals([5], find_free_numbers(no_free_numbers, 1))
+        self.assertEquals([5, 6], find_free_numbers(no_free_numbers, 2))
 
         free_numbers = [3, 4, 8]
-        self.assertEquals(find_free_numbers(free_numbers, 0), [1, 2, 5, 6, 7])
-        self.assertEquals(find_free_numbers(free_numbers, 1), [1, 2, 5, 6, 7])
-        self.assertEquals(find_free_numbers(free_numbers, 7), [1, 2, 5, 6, 7, 9, 10])
+        self.assertEquals([1, 2, 5, 6, 7], find_free_numbers(free_numbers, 0))
+        self.assertEquals([1, 2, 5, 6, 7], find_free_numbers(free_numbers, 1))
+        self.assertEquals([1, 2, 5, 6, 7, 9, 10], find_free_numbers(free_numbers, 7))
 
-    def test_int_variable(self):
-        config = HierarchicalConfig()
-        int_variable = Variable(
-            levels=['global', 'server', 'group'],
-            name='int_variable',
-            var_type='int',
-            default=1,
-            description='minimum time since last activity before channel is allowed to be deleted',
-            store=config
-        )
-        int_variable.set_global(5)
-        self.assertEquals(int_variable.get(), 5)
-        int_variable.set_global('5')
-        self.assertEquals(int_variable.get(), 5)
-
-        self.assertRaises(ValueError, int_variable.set_global, 'a')
 
     def test_argparse(self):
         parser = argparse.ArgumentParser(prog="set")

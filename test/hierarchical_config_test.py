@@ -4,6 +4,7 @@ import unittest
 import jsonpickle
 
 from cogs.hierarchical_config import HierarchicalConfig, Location
+from cogs.hierarchical_config.config import Variable
 
 
 class TestSettings(unittest.TestCase):
@@ -115,6 +116,24 @@ class TestSettings(unittest.TestCase):
         loaded_config.load(file_path)
 
         self.assertEquals(config, loaded_config)
+
+
+    def test_int_variable(self):
+        config = HierarchicalConfig()
+        int_variable = Variable(
+            levels=['global', 'server', 'group'],
+            name='int_variable',
+            var_type='int',
+            default=1,
+            description='minimum time since last activity before channel is allowed to be deleted',
+            store=config
+        )
+        int_variable.set_global(5)
+        self.assertEquals(int_variable.get(), 5)
+        int_variable.set_global('5')
+        self.assertEquals(int_variable.get(), 5)
+
+        self.assertRaises(ValueError, int_variable.set_global, 'a')
 
 
 if __name__ == '__main__':

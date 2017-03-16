@@ -93,7 +93,7 @@ class Variable:
                  levels: List[str],
                  var_type: str,
                  description: str,
-                 default: str,
+                 default: ValueType,
                  store: Config):
         self.name = name
         self.levels = levels
