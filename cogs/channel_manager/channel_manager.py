@@ -15,6 +15,7 @@ from discord import ChannelType
 from discord.channel import Channel
 from discord.ext import commands
 from discord.http import HTTPClient
+from discord.http import Route
 
 from cogs.utils import checks
 from cogs.utils.dataIO import dataIO
@@ -188,11 +189,12 @@ class ChannelManager:
 
         log_level = self.config.get_var('log_level')
         if log_level is not None:
-            logger.setLevel(logging.getLevelName(log_level.upper()))
+            logger.setLevel(logging.getLevelName(log_level).upper())
         logger.debug("loaded settings file with data: {0}".format(self.config))
 
         log_channel_id = self.config.get_var('log_channel_id')
         log_channel = self.bot.get_channel(log_channel_id)
+        logger.info("log channel is: {}".format(log_channel))
         self.channel_handler = ChannelHandler(self.bot, self, 'ChannelManager', log_channel)
         red_format = logging.Formatter(
             '%(asctime)s %(levelname)s %(module)s %(funcName)s %(lineno)d: '
@@ -306,6 +308,14 @@ class ChannelManager:
         self.config.set_var('log_channel_id', channel.id)
         self.save_config()
         await self.bot.say('setting debug channel to: {0}'.format(channel.name))
+
+    @debug.command(pass_context=True)
+    @checks.mod_or_permissions()
+    async def echo(self, ctx, level_str, text):
+        level = self.parse_log_level(level_str)
+        logger.debug(text)
+        logger.log(level, text)
+
 
     @debug.command(help='Prints current configuration')
     async def showdata(self):
@@ -513,7 +523,7 @@ class ChannelManager:
     async def update_groups(self, server):
         if not self.enabled:
             return
-        channel_groups = self.config.get_var('channel_groups', [server.id])
+        channel_groups = self.config.get_var('channel_groups', [server.id], [])
         for group_name in channel_groups:
             await self.update_group(server, group_name)
         await self.fix_channel_positions(server)
@@ -646,10 +656,9 @@ class ChannelManager:
 
     async def move_channels(self, server: discord.Server, channels: List[discord.Channel]):
         payload = [{'id': c.id, 'position': index} for index, c in enumerate(channels)]
-        url = '{0}/{1.id}/channels'.format(HTTPClient.GUILDS, server)
-        logger.debug('using url: {0}'.format(url))
+        r = Route('PATCH', '/guilds/{guild_id}/channels', guild_id=server.id)
         logger.debug('using payload: {0!r}'.format(payload))
-        await self.bot.http.patch(url, json=payload, bucket="move_channel")
+        await self.bot.http.request(r, json=payload)
 
     async def create_channel(self, server: discord.Server, name: str, type: ChannelType, user_limit: int,
                              permission_overwrites=None):
